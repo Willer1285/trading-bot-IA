@@ -300,18 +300,6 @@ class MT5TradingBot:
         try:
             start_time = datetime.utcnow()
 
-            # Check if we can open more positions
-            open_positions = self.order_executor.get_open_positions(symbol)
-            total_positions = len(self.order_executor.get_open_positions())
-
-            if len(open_positions) > 0:
-                logger.debug(f"{symbol}: Already has open position, skipping")
-                return
-
-            if total_positions >= self.max_open_positions:
-                logger.debug(f"Max positions ({self.max_open_positions}) reached, skipping")
-                return
-
             # Get multi-timeframe data
             mtf_data = self.market_data_manager.get_multi_timeframe_data(symbol, limit=1000)
 
@@ -383,6 +371,18 @@ class MT5TradingBot:
         """
         try:
             logger.info(f"Executing signal: {signal.signal_type} {signal.symbol}")
+
+            # Check position limits BEFORE executing on MT5
+            open_positions = self.order_executor.get_open_positions(signal.symbol)
+            total_positions = len(self.order_executor.get_open_positions())
+
+            if len(open_positions) > 0:
+                logger.warning(f"{signal.symbol}: Already has open position, NOT executing on MT5")
+                return
+
+            if total_positions >= self.max_open_positions:
+                logger.warning(f"Max positions ({self.max_open_positions}) reached, NOT executing {signal.symbol} on MT5")
+                return
 
             # Get account info
             account_info = self.mt5_connector.get_account_info()
