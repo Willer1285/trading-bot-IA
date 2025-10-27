@@ -1,6 +1,6 @@
 """
 Market Analyzer
-Main AI engine for market analysis and prediction
+Motor principal de IA para el análisis y la predicción del mercado.
 """
 
 import pandas as pd
@@ -15,7 +15,7 @@ from .ai_models import EnsembleModel, create_labels
 
 
 class MarketAnalysis:
-    """Container for market analysis results"""
+    """Contenedor para los resultados del análisis de mercado."""
 
     def __init__(
         self,
@@ -27,6 +27,7 @@ class MarketAnalysis:
         indicators: Dict,
         patterns: Dict[str, bool],
         support_resistance: Dict[str, float],
+        strength: int,  # Nuevo atributo para el score de fuerza
         timestamp: datetime
     ):
         self.symbol = symbol
@@ -37,26 +38,28 @@ class MarketAnalysis:
         self.indicators = indicators
         self.patterns = patterns
         self.support_resistance = support_resistance
+        self.strength = strength  # Score de 0 a 100
         self.timestamp = timestamp
 
     @property
     def signal(self) -> str:
-        """Get signal as string"""
+        """Obtiene la señal como una cadena de texto."""
         signal_map = {0: 'SELL', 1: 'HOLD', 2: 'BUY'}
         return signal_map.get(self.prediction, 'HOLD')
 
     @property
     def is_actionable(self) -> bool:
-        """Check if signal is actionable (BUY or SELL)"""
+        """Verifica si la señal es accionable (BUY o SELL)."""
         return self.prediction in [0, 2]
 
     def to_dict(self) -> Dict:
-        """Convert to dictionary"""
+        """Convierte el objeto a un diccionario."""
         return {
             'symbol': self.symbol,
             'timeframe': self.timeframe,
             'signal': self.signal,
             'confidence': round(self.confidence, 4),
+            'strength': self.strength,
             'probabilities': {
                 'sell': round(self.probabilities['sell'], 4),
                 'hold': round(self.probabilities['hold'], 4),
@@ -70,23 +73,15 @@ class MarketAnalysis:
 
 
 class MarketAnalyzer:
-    """Advanced AI-powered market analyzer"""
+    """Analizador de mercado avanzado impulsado por IA."""
 
     def __init__(self, enable_training: bool = False):
-        """
-        Initialize Market Analyzer
-
-        Args:
-            enable_training: Whether to enable model training
-        """
         self.feature_engineer = FeatureEngineer()
         self.technical_indicators = TechnicalIndicators()
         self.model = EnsembleModel()
-
         self.enable_training = enable_training
         self.is_trained = False
-
-        logger.info("Market Analyzer initialized")
+        logger.info("Market Analyzer inicializado con sistema de puntuación híbrido mejorado.")
 
     def analyze(
         self,
@@ -94,289 +89,169 @@ class MarketAnalyzer:
         symbol: str,
         timeframe: str
     ) -> Optional[MarketAnalysis]:
-        """
-        Perform comprehensive market analysis
-
-        Args:
-            df: DataFrame with OHLCV data
-            symbol: Trading pair
-            timeframe: Timeframe
-
-        Returns:
-            MarketAnalysis object or None
-        """
+        """Realiza un análisis de mercado completo."""
         try:
             if df.empty or len(df) < 100:
-                logger.warning(f"Insufficient data for analysis: {len(df)} candles")
+                logger.warning(f"Datos insuficientes para el análisis: {len(df)} velas")
                 return None
 
-            # Extract features
             df_features = self.feature_engineer.extract_features(df)
-
-            # Prepare data for model
             df_clean = self.feature_engineer.prepare_for_model(df_features)
 
             if df_clean.empty:
-                logger.warning("No valid features after preparation")
+                logger.warning("No hay características válidas después de la preparación")
                 return None
 
-            # Get latest data point
             latest_features = df_clean.tail(1)
-
-            # Make prediction
-            raw_predictions = self.model.predict_individual(latest_features)
-            for model_name, pred in raw_predictions.items():
-                logger.debug(f"Model '{model_name}' prediction: {pred[0]}")
-
             prediction = self.model.predict(latest_features)[0]
             confidence = self.model.get_confidence(latest_features)[0]
             probabilities = self.model.predict_proba(latest_features)[0]
 
-            # Get technical indicators summary
-            latest_candle = df.iloc[-1]
             indicators = self._extract_indicator_summary(df)
-
-            # Detect patterns
             patterns = self.technical_indicators.detect_patterns(df)
-
-            # Calculate support/resistance
             support_resistance = self.technical_indicators.calculate_support_resistance(df)
 
-            # Create analysis object
-            analysis = MarketAnalysis(
-                symbol=symbol,
-                timeframe=timeframe,
-                prediction=int(prediction),
-                confidence=float(confidence),
-                probabilities={
-                    'sell': float(probabilities[0]),
-                    'hold': float(probabilities[1]),
-                    'buy': float(probabilities[2])
-                },
-                indicators=indicators,
-                patterns=patterns,
-                support_resistance=support_resistance,
-                timestamp=datetime.utcnow()
+            temp_analysis = MarketAnalysis(
+                symbol=symbol, timeframe=timeframe, prediction=int(prediction),
+                confidence=float(confidence), probabilities={'sell': float(probabilities[0]), 'hold': float(probabilities[1]), 'buy': float(probabilities[2])},
+                indicators=indicators, patterns=patterns, support_resistance=support_resistance,
+                strength=0, timestamp=datetime.utcnow()
             )
 
-            logger.debug(
-                f"Analysis for {symbol} {timeframe}: "
-                f"{analysis.signal} (confidence: {analysis.confidence:.2%})"
-            )
+            strength_score = self._calculate_signal_strength(temp_analysis)
+            temp_analysis.strength = strength_score
 
-            return analysis
+            logger.debug(f"Análisis para {symbol} {timeframe}: {temp_analysis.signal} (Confianza: {temp_analysis.confidence:.2%}, Fuerza: {temp_analysis.strength}/100)")
+            return temp_analysis
 
         except Exception as e:
-            logger.error(f"Error analyzing {symbol} {timeframe}: {e}")
+            logger.error(f"Error analizando {symbol} {timeframe}: {e}")
             return None
+
+    def _calculate_signal_strength(self, analysis: MarketAnalysis) -> int:
+        """
+        Calcula la fuerza de la señal (0-100) usando un sistema de puntuación granular.
+        """
+        score = 0
+        reason = []
+
+        # 1. Puntuación Base de la IA (Máx 30 puntos)
+        if analysis.is_actionable:
+            score += 15
+            reason.append("IA Accionable (+15)")
+            confidence_score = round(analysis.confidence * 15)
+            score += confidence_score
+            reason.append(f"Confianza IA {analysis.confidence:.0%} (+{confidence_score})")
+
+        # 2. Puntuación de Momento (Máx 40 puntos)
+        indicators = analysis.indicators
+        rsi = indicators.get('rsi_14', 50)
+        macd = indicators.get('macd', 0)
+        macd_signal = indicators.get('macd_signal', 0)
+
+        if analysis.signal == 'BUY':
+            # RSI: Más puntos cuanto más bajo (mejor si < 40)
+            if rsi < 40:
+                rsi_score = round((40 - rsi) / 40 * 20)
+                score += rsi_score
+                reason.append(f"RSI bajo ({rsi:.1f}) (+{rsi_score})")
+            # MACD: Puntos si hay un cruce alcista
+            if macd > macd_signal:
+                score += 20
+                reason.append("Cruce MACD (+20)")
+        elif analysis.signal == 'SELL':
+            # RSI: Más puntos cuanto más alto (mejor si > 60)
+            if rsi > 60:
+                rsi_score = round((rsi - 60) / 40 * 20)
+                score += rsi_score
+                reason.append(f"RSI alto ({rsi:.1f}) (+{rsi_score})")
+            # MACD: Puntos si hay un cruce bajista
+            if macd < macd_signal:
+                score += 20
+                reason.append("Cruce MACD (+20)")
+
+        # 3. Puntuación de Tendencia (Máx 30 puntos)
+        price = indicators.get('price', 0)
+        sma_50 = indicators.get('sma_50', 0)
+        adx = indicators.get('adx', 0)
+
+        # Alineación con la media móvil
+        if sma_50 > 0:
+            if analysis.signal == 'BUY' and price > sma_50:
+                score += 15
+                reason.append("Precio > SMA50 (+15)")
+            elif analysis.signal == 'SELL' and price < sma_50:
+                score += 15
+                reason.append("Precio < SMA50 (+15)")
+        
+        # Fuerza de la tendencia con ADX
+        if adx > 25:
+            score += 15
+            reason.append(f"ADX > 25 ({adx:.0f}) (+15)")
+
+        final_score = min(int(score), 100)
+        logger.debug(f"Cálculo de Fuerza para {analysis.symbol} ({analysis.signal}): {final_score}/100. Razón: {', '.join(reason)}")
+        return final_score
 
     def analyze_multi_timeframe(
         self,
         data_dict: Dict[str, pd.DataFrame],
         symbol: str
     ) -> Dict[str, Optional[MarketAnalysis]]:
-        """
-        Analyze multiple timeframes
-
-        Args:
-            data_dict: Dictionary mapping timeframe to DataFrame
-            symbol: Trading pair
-
-        Returns:
-            Dictionary mapping timeframe to MarketAnalysis
-        """
+        """Analiza múltiples timeframes."""
         results = {}
-
         for timeframe, df in data_dict.items():
             analysis = self.analyze(df, symbol, timeframe)
             results[timeframe] = analysis
-
         return results
 
-    def get_consensus_signal(
-        self,
-        analyses: Dict[str, Optional[MarketAnalysis]]
-    ) -> Tuple[str, float]:
-        """
-        Get consensus signal using the ensemble model.
-        This now acts as a wrapper around the main analyze method,
-        but it processes multi-timeframe data to get a single prediction.
-        """
-        # We need to create a single feature vector that represents the multi-timeframe analysis
-        # For simplicity, we'll use the features from the primary timeframe (e.g., 1h)
-        # A more complex approach could involve combining features from all timeframes.
-
-        # Log all timeframe signals for debugging
-        tf_signals = {tf: (a.signal, f"{a.confidence:.2%}") if a else None for tf, a in analyses.items()}
-        logger.info(f"Multi-timeframe signals: {tf_signals}")
-
-        primary_analysis = None
-        primary_tf = None
-        # Prioritize 1m for scalping strategy, then validate with higher timeframes
-        for tf in ['1m', '5m', '15m', '1h', '4h', '1d']:
-            if tf in analyses and analyses[tf]:
-                primary_analysis = analyses[tf]
-                primary_tf = tf
-                break
-
-        if not primary_analysis:
-            logger.warning("No primary analysis found, returning HOLD")
-            return 'HOLD', 0.0
-
-        # The 'analyze' method already uses the ensemble model. We just need to extract its prediction.
-        # The confidence is the probability of the predicted class.
-        prediction = primary_analysis.prediction
-        confidence = primary_analysis.confidence
-
-        signal_map = {0: 'SELL', 1: 'HOLD', 2: 'BUY'}
-        consensus = signal_map.get(prediction, 'HOLD')
-
-        logger.info(f"Consensus: Using primary timeframe {primary_tf} → {consensus} with {confidence:.2%} confidence")
-
-        return consensus, float(confidence)
-
     def train(self, historical_data: pd.DataFrame):
-        """
-        Train AI models on historical data
-
-        Args:
-            historical_data: DataFrame with historical OHLCV data
-        """
+        """Entrena los modelos de IA con datos históricos."""
         if not self.enable_training:
-            logger.warning("Training is disabled")
+            logger.warning("El entrenamiento está deshabilitado")
             return
-
         try:
-            logger.info("Starting model training...")
-            logger.info(f"Training data shape: {historical_data.shape}")
-
-            # Extract features
+            logger.info("Iniciando entrenamiento del modelo...")
             df_features = self.feature_engineer.extract_features(historical_data)
-            logger.info(f"Features extracted, shape: {df_features.shape}")
-
-            # Create labels with auto-calculated threshold
             labels = create_labels(df_features, forward_window=5, threshold=None)
             df_features['label'] = labels
-
-            # Check label distribution
-            unique_labels = labels.unique()
-            label_counts = labels.value_counts()
-            logger.info(f"Unique labels in data: {unique_labels}")
-            logger.info(f"Label counts: {label_counts.to_dict()}")
-
-            # Validate we have enough diversity
-            if len(unique_labels) < 2:
-                logger.error("Not enough label diversity for training. All samples have the same label.")
-                logger.error("This indicates the data may not have enough price movement or the threshold is incorrect.")
+            if len(labels.unique()) < 2:
+                logger.error("No hay suficiente diversidad de etiquetas para el entrenamiento.")
                 return
-
-            # Prepare data
-            df_clean = self.feature_engineer.prepare_for_model(
-                df_features,
-                target_column='label'
-            )
-
+            df_clean = self.feature_engineer.prepare_for_model(df_features, target_column='label')
             if len(df_clean) < 100:
-                logger.warning("Insufficient data for training")
+                logger.warning("Datos insuficientes para el entrenamiento")
                 return
-
-            # Split features and labels
             X = df_clean.drop('label', axis=1)
             y = df_clean['label']
-
-            # Final check on y distribution
-            logger.info(f"Final training set - X shape: {X.shape}, y unique values: {y.nunique()}")
-
-            # Train ensemble
             self.model.fit(X, y)
-
             self.is_trained = True
-            logger.info(f"Model training completed on {len(X)} samples")
-
+            logger.info(f"Entrenamiento del modelo completado en {len(X)} muestras")
         except Exception as e:
-            logger.error(f"Error during training: {e}")
+            logger.error(f"Error durante el entrenamiento: {e}")
             import traceback
             logger.error(traceback.format_exc())
 
     def _extract_indicator_summary(self, df: pd.DataFrame) -> Dict:
-        """Extract key indicator values"""
+        """Extrae los valores clave de los indicadores."""
         latest = df.iloc[-1]
-
-        summary = {
-            'price': float(latest['close']),
-        }
-
-        # Add indicators if they exist
+        summary = {'price': float(latest['close'])}
         indicators_to_extract = [
-            'rsi_14', 'macd', 'macd_signal', 'adx',
-            'sma_25', 'sma_50', 'ema_21', 'ema_50',
-            'bb_high', 'bb_low', 'atr', 'obv'
+            'rsi_14', 'macd', 'macd_signal', 'adx', 'sma_25', 'sma_50',
+            'ema_21', 'ema_50', 'bb_high', 'bb_low', 'atr', 'obv'
         ]
-
         for indicator in indicators_to_extract:
             if indicator in df.columns:
                 value = latest.get(indicator)
                 if pd.notna(value):
                     summary[indicator] = float(value)
-
         return summary
 
     def save_models(self, directory: str = "models"):
-        """Save trained models"""
         self.model.save_all(directory)
-        logger.info(f"Models saved to {directory}")
+        logger.info(f"Modelos guardados en {directory}")
 
     def load_models(self, directory: str = "models"):
-        """Load trained models"""
         self.model.load_all(directory)
         self.is_trained = True
-        logger.info(f"Models loaded from {directory}")
-
-    def calculate_signal_strength(self, analysis: MarketAnalysis) -> int:
-        """
-        Calculate overall signal strength (0-100)
-
-        Args:
-            analysis: MarketAnalysis object
-
-        Returns:
-            Signal strength score
-        """
-        score = 0
-
-        # Base score from confidence
-        score += analysis.confidence * 40
-
-        # Indicator alignment
-        indicators = analysis.indicators
-
-        if analysis.signal == 'BUY':
-            if indicators.get('rsi_14', 50) < 40:
-                score += 10
-            if indicators.get('price', 0) > indicators.get('sma_50', 0):
-                score += 10
-            if indicators.get('macd', 0) > indicators.get('macd_signal', 0):
-                score += 10
-
-        elif analysis.signal == 'SELL':
-            if indicators.get('rsi_14', 50) > 60:
-                score += 10
-            if indicators.get('price', 0) < indicators.get('sma_50', 0):
-                score += 10
-            if indicators.get('macd', 0) < indicators.get('macd_signal', 0):
-                score += 10
-
-        # Pattern confirmation
-        patterns = analysis.patterns
-        if patterns.get('bullish_engulfing') or patterns.get('morning_star'):
-            if analysis.signal == 'BUY':
-                score += 15
-        if patterns.get('bearish_engulfing') or patterns.get('evening_star'):
-            if analysis.signal == 'SELL':
-                score += 15
-
-        # Volume confirmation
-        if indicators.get('obv', 0) > 0:
-            score += 5
-
-        return min(int(score), 100)
+        logger.info(f"Modelos cargados desde {directory}")

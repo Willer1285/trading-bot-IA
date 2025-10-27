@@ -177,37 +177,35 @@ class SignalGenerator:
                 logger.warning(f"{symbol}: No primary analysis available")
                 return None
 
-            # Get consensus signal
-            consensus_signal, consensus_confidence = self.analyzer.get_consensus_signal(
-                multi_tf_analyses
-            )
+            # Usar directamente la señal, confianza y fuerza del análisis primario
+            signal_type = primary_analysis.signal
+            confidence = primary_analysis.confidence
+            strength = primary_analysis.strength
 
-            strength = self.analyzer.calculate_signal_strength(primary_analysis)
-
-            logger.info(f"Analysis result for {symbol}: Signal={consensus_signal}, Confidence={consensus_confidence:.2%}, Strength={strength}/100")
+            logger.info(f"Analysis result for {symbol}: Signal={signal_type}, Confidence={confidence:.2%}, Strength={strength}/100")
 
             # Check if signal is actionable
-            if consensus_signal == 'HOLD':
-                logger.info(f"{symbol}: ⏸️  Consensus signal is HOLD, skipping signal generation")
+            if signal_type == 'HOLD':
+                logger.info(f"{symbol}: ⏸️  Primary signal is HOLD, skipping signal generation")
                 return None
 
             # Validate signal direction for synthetic indices (PainX/GainX)
-            if not self._validate_signal_direction(symbol, consensus_signal):
+            if not self._validate_signal_direction(symbol, signal_type):
                 return None
 
             # Check for duplicate signals
             if not self.signal_tracker.should_send_signal(
                 symbol=symbol,
-                signal_type=consensus_signal,
+                signal_type=signal_type,
                 entry_price=current_price,
                 current_price=current_price
             ):
                 return None
 
             # Check minimum thresholds
-            if consensus_confidence < self.min_confidence:
+            if confidence < self.min_confidence:
                 logger.warning(
-                    f"{symbol}: ❌ Confidence {consensus_confidence:.2%} below threshold {self.min_confidence:.2%}"
+                    f"{symbol}: ❌ Confidence {confidence:.2%} below threshold {self.min_confidence:.2%}"
                 )
                 return None
 
@@ -217,11 +215,11 @@ class SignalGenerator:
                 )
                 return None
 
-            logger.info(f"{symbol}: ✅ Passed thresholds (Confidence: {consensus_confidence:.2%} >= {self.min_confidence:.2%}, Strength: {strength} >= {self.min_strength})")
+            logger.info(f"{symbol}: ✅ Passed thresholds (Confidence: {confidence:.2%} >= {self.min_confidence:.2%}, Strength: {strength} >= {self.min_strength})")
 
             # Apply signal quality filters (for Telegram notification)
             # Note: Execution limits are checked separately in main_mt5.py before executing on MT5
-            if not self.signal_filter.should_notify(symbol, consensus_signal, multi_tf_analyses):
+            if not self.signal_filter.should_notify(symbol, signal_type, multi_tf_analyses):
                 logger.warning(f"{symbol}: ❌ Signal filtered out by quality filters")
                 return None
 
@@ -230,7 +228,7 @@ class SignalGenerator:
             # Calculate entry, stop loss, and take profit
             risk_params = self.risk_manager.calculate_risk_parameters(
                 symbol=symbol,
-                signal_type=consensus_signal,
+                signal_type=signal_type,
                 entry_price=current_price,
                 analysis=primary_analysis
             )
@@ -240,7 +238,7 @@ class SignalGenerator:
                 return None
 
             # Generate signal ID
-            signal_id = f"{symbol}_{consensus_signal}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+            signal_id = f"{symbol}_{signal_type}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
 
             # Create reason
             reason = self._generate_reason(primary_analysis, multi_tf_analyses)
@@ -249,11 +247,11 @@ class SignalGenerator:
             signal = TradingSignal(
                 signal_id=signal_id,
                 symbol=symbol,
-                signal_type=consensus_signal,
+                signal_type=signal_type,
                 entry_price=risk_params['entry_price'],
                 stop_loss=risk_params['stop_loss'],
                 take_profit_levels=risk_params['take_profit_levels'],
-                confidence=consensus_confidence,
+                confidence=confidence,
                 strength=strength,
                 timeframe=primary_analysis.timeframe,
                 timestamp=datetime.utcnow(),
@@ -271,7 +269,7 @@ class SignalGenerator:
             # Track signal to prevent duplicates
             self.signal_tracker.track_signal(
                 symbol=symbol,
-                signal_type=consensus_signal,
+                signal_type=signal_type,
                 entry_price=risk_params['entry_price'],
                 stop_loss=risk_params['stop_loss'],
                 take_profit=risk_params['take_profit_levels'][0] if risk_params['take_profit_levels'] else 0,
@@ -279,8 +277,8 @@ class SignalGenerator:
             )
 
             logger.info(
-                f"Generated {consensus_signal} signal for {symbol} "
-                f"(confidence: {consensus_confidence:.2%}, strength: {strength})"
+                f"Generated {signal_type} signal for {symbol} "
+                f"(confidence: {confidence:.2%}, strength: {strength})"
             )
 
             return signal

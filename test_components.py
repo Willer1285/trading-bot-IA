@@ -18,17 +18,17 @@ from src.telegram_bot.telegram_bot import TelegramBot
 async def test_telegram():
     """Tests the Telegram bot connection and sends a message."""
     logger.info("=" * 30 + " Testing Telegram Connection " + "=" * 30)
-    if not config.telegram.bot_token or not config.telegram.channel_id:
-        logger.error("Telegram BOT_TOKEN or CHANNEL_ID are not set in .env file. Skipping test.")
+    if not config.telegram_bot_token or not config.telegram_channel_id:
+        logger.error("TELEGRAM_BOT_TOKEN or TELEGRAM_CHANNEL_ID are not set in .env file. Skipping test.")
         return
 
     telegram_bot = TelegramBot(
-        bot_token=config.telegram.bot_token,
-        channel_id=config.telegram.channel_id
+        bot_token=config.telegram_bot_token,
+        channel_id=config.telegram_channel_id
     )
     
-    logger.info(f"Attempting to connect to Telegram with Bot Token: ...{config.telegram.bot_token[-4:]}")
-    logger.info(f"Attempting to send a message to Channel ID: {config.telegram.channel_id}")
+    logger.info(f"Attempting to connect to Telegram with Bot Token: ...{config.telegram_bot_token[-4:]}")
+    logger.info(f"Attempting to send a message to Channel ID: {config.telegram_channel_id}")
 
     success = await telegram_bot.test_connection()
 
@@ -55,11 +55,11 @@ async def test_mt5_execution():
 
     order_executor = MT5OrderExecutor(
         connector=mt5_connector,
-        magic_number=config.get('mt5.magic_number', 234000)
+        magic_number=config.mt5_magic_number
     )
 
     # Use the first symbol from the config for the test
-    test_symbol = config.symbols[0]
+    test_symbol = config.trading_symbols[0]
     logger.info(f"Using symbol '{test_symbol}' for execution test.")
 
     # Get symbol info to determine minimum volume

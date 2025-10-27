@@ -34,7 +34,7 @@ class MT5TradingBot:
         # Setup logging
         setup_logger(
             log_level=config.log_level,
-            log_file=config.get('logging.log_file', 'logs/trading_bot.log')
+            log_file=config.log_file
         )
 
         logger.info("=" * 60)
@@ -55,11 +55,11 @@ class MT5TradingBot:
         # Control flags
         self.is_running = False
         self.analysis_interval = 60  # seconds
-        self.auto_trading_enabled = config.get('mt5.auto_trading_enabled', True)
+        self.auto_trading_enabled = config.mt5_auto_trading
 
         # Risk management
-        self.risk_per_trade = float(os.getenv('MT5_RISK_PER_TRADE', 1.0))
-        self.max_open_positions = int(os.getenv('MT5_MAX_OPEN_POSITIONS', 3))
+        self.lot_size = config.mt5_lot_size
+        self.max_open_positions = config.mt5_max_open_positions
 
         # Initialize all components
         self._initialize_components()
@@ -69,16 +69,11 @@ class MT5TradingBot:
         try:
             # MT5 connector
             logger.info("Initializing MT5 connector...")
-            mt5_login = config.get('mt5.login')
-            mt5_password = config.get('mt5.password')
-            mt5_server = config.get('mt5.server')
-            mt5_path = config.get('mt5.path')
-
             self.mt5_connector = MT5Connector(
-                login=int(mt5_login) if mt5_login else None,
-                password=mt5_password,
-                server=mt5_server,
-                path=mt5_path
+                login=config.mt5_login,
+                password=config.mt5_password,
+                server=config.mt5_server,
+                path=config.mt5_path
             )
 
             if not self.mt5_connector.is_connected:
@@ -88,7 +83,7 @@ class MT5TradingBot:
             logger.info("Initializing order executor...")
             self.order_executor = MT5OrderExecutor(
                 connector=self.mt5_connector,
-                magic_number=config.get('mt5.magic_number', 234000)
+                magic_number=config.mt5_magic_number
             )
 
             # Get account info
@@ -106,8 +101,8 @@ class MT5TradingBot:
             logger.info("Initializing market data manager...")
             self.market_data_manager = MT5MarketDataManager(
                 connector=self.mt5_connector,
-                symbols=config.symbols,
-                timeframes=config.timeframes_list,
+                symbols=config.trading_symbols,
+                timeframes=config.timeframes,
                 update_interval=60
             )
 
@@ -125,7 +120,7 @@ class MT5TradingBot:
                 
                 # Fetch data for training
                 logger.info("Fetching historical data for initial training...")
-                training_symbol = config.symbols[0]
+                training_symbol = config.trading_symbols[0]
                 training_timeframe = '1h'
                 
                 # Use the connector to get historical data
@@ -146,29 +141,26 @@ class MT5TradingBot:
             # Signal components
             logger.info("Initializing signal generator...")
             signal_filter = SignalFilter(
-                max_signals_per_day=config.get('signals.risk_management.max_signals_per_day', 10),
-                max_signals_per_pair=config.get('signals.risk_management.max_signals_per_pair', 3)
+                max_signals_per_day=config.max_signals_per_day,
+                max_signals_per_pair=config.max_signals_per_pair
             )
 
-            risk_manager = RiskManager(
-                default_risk_reward=config.get('signals.risk_management.min_risk_reward', 2.0),
-                atr_multiplier_sl=config.get('signals.risk_management.stop_loss_atr_multiplier', 1.5)
-            )
+            risk_manager = RiskManager()
 
             self.signal_generator = SignalGenerator(
                 analyzer=self.analyzer,
                 signal_filter=signal_filter,
                 risk_manager=risk_manager,
-                min_confidence=config.ai.confidence_threshold,
-                min_strength=config.ai.min_signal_score
+                min_confidence=config.confidence_threshold,
+                min_strength=config.min_signal_score
             )
 
             # Telegram bot
             logger.info("Initializing Telegram bot...")
             self.telegram_bot = TelegramBot(
-                bot_token=config.telegram.bot_token,
-                channel_id=config.telegram.channel_id,
-                enable_charts=config.get('telegram.include_charts', True)
+                bot_token=config.telegram_bot_token,
+                channel_id=config.telegram_channel_id,
+                enable_charts=config.telegram_include_charts
             )
 
             logger.info("All components initialized successfully")
@@ -200,13 +192,13 @@ class MT5TradingBot:
                 f"**Balance:** {account_info['balance']} {account_info['currency']}\n"
                 f"**Server:** {account_info['server']}\n"
                 f"**Leverage:** 1:{account_info['leverage']}\n\n"
-                f"Monitoring {len(config.symbols)} symbols: {', '.join(config.symbols)}\n"
-                f"Timeframes: {', '.join(config.timeframes_list)}\n\n"
+                f"Monitoring {len(config.trading_symbols)} symbols: {', '.join(config.trading_symbols)}\n"
+                f"Timeframes: {', '.join(config.timeframes)}\n\n"
                 f"**Auto-Trading:** {'✅ ENABLED' if self.auto_trading_enabled else '❌ DISABLED'}\n"
-                f"**Risk per Trade:** {self.risk_per_trade}%\n"
+                f"**Lot Size:** {self.lot_size} lots\n"
                 f"**Max Positions:** {self.max_open_positions}\n"
-                f"**Min Confidence:** {config.ai.confidence_threshold:.0%}\n"
-                f"**Min Signal Strength:** {config.ai.min_signal_score}/100"
+                f"**Min Confidence:** {config.confidence_threshold:.0%}\n"
+                f"**Min Signal Strength:** {config.min_signal_score}/100"
             )
 
             # Start market data collection
@@ -270,7 +262,7 @@ class MT5TradingBot:
                     continue
 
                 # Analyze all symbols
-                for symbol in config.symbols:
+                for symbol in config.trading_symbols:
                     await self._analyze_and_execute(symbol)
 
                 logger.info("=" * 30 + " Analysis Cycle Completed " + "=" * 32)
@@ -301,7 +293,7 @@ class MT5TradingBot:
             start_time = datetime.utcnow()
 
             # Get multi-timeframe data
-            mtf_data = self.market_data_manager.get_multi_timeframe_data(symbol, limit=1000)
+            mtf_data = self.market_data_manager.get_multi_timeframe_data(symbol, limit=5000)
 
             if not mtf_data or all(df.empty for df in mtf_data.values()):
                 logger.debug(f"{symbol}: No data available yet")
@@ -398,17 +390,9 @@ class MT5TradingBot:
                 logger.error(f"Could not get symbol info for {signal.symbol}")
                 return
 
-            # Calculate lot size based on risk
-            stop_loss_pips = abs(signal.entry_price - signal.stop_loss) / symbol_info['point'] / 10
-
-            lot_size = self.order_executor.calculate_lot_size(
-                symbol=signal.symbol,
-                risk_percent=self.risk_per_trade,
-                stop_loss_pips=stop_loss_pips,
-                account_balance=account_info['balance']
-            )
-
-            logger.info(f"Calculated lot size: {lot_size} (Risk: {self.risk_per_trade}%, SL: {stop_loss_pips} pips)")
+            # Usar el tamaño de lote fijo de la configuración
+            lot_size = self.lot_size
+            logger.info(f"Using fixed lot size: {lot_size}")
 
             # Execute order
             # MT5 comment limit: 31 characters
