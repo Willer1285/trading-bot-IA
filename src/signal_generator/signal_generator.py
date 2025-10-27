@@ -117,9 +117,9 @@ class SignalGenerator:
             TradingSignal or None
         """
         try:
-            # Get primary timeframe analysis (1h or 4h preferred)
+            # Get primary timeframe analysis (1m preferred for scalping)
             primary_analysis = None
-            for tf in ['4h', '1h', '15m']:
+            for tf in ['1m', '5m', '15m', '1h', '4h']:
                 if tf in multi_tf_analyses and multi_tf_analyses[tf]:
                     primary_analysis = multi_tf_analyses[tf]
                     break
@@ -157,12 +157,13 @@ class SignalGenerator:
 
             logger.info(f"{symbol}: ✅ Passed thresholds (Confidence: {consensus_confidence:.2%} >= {self.min_confidence:.2%}, Strength: {strength} >= {self.min_strength})")
 
-            # Apply signal filters
-            if not self.signal_filter.should_trade(symbol, consensus_signal, multi_tf_analyses):
-                logger.warning(f"{symbol}: ❌ Signal filtered out by signal_filter.should_trade()")
+            # Apply signal quality filters (for Telegram notification)
+            # Note: Execution limits are checked separately in main_mt5.py before executing on MT5
+            if not self.signal_filter.should_notify(symbol, consensus_signal, multi_tf_analyses):
+                logger.warning(f"{symbol}: ❌ Signal filtered out by quality filters")
                 return None
 
-            logger.info(f"{symbol}: ✅ Passed signal filter")
+            logger.info(f"{symbol}: ✅ Passed quality filters - Signal will be generated")
 
             # Calculate entry, stop loss, and take profit
             risk_params = self.risk_manager.calculate_risk_parameters(

@@ -212,7 +212,8 @@ class MarketAnalyzer:
 
         primary_analysis = None
         primary_tf = None
-        for tf in ['1h', '4h', '15m', '5m', '1m']:
+        # Prioritize 1m for scalping strategy, then validate with higher timeframes
+        for tf in ['1m', '5m', '15m', '1h', '4h', '1d']:
             if tf in analyses and analyses[tf]:
                 primary_analysis = analyses[tf]
                 primary_tf = tf

@@ -45,14 +45,14 @@ class SignalFilter:
 
         logger.info("Signal Filter initialized")
 
-    def should_trade(
+    def should_notify(
         self,
         symbol: str,
         signal_type: str,
         analyses: Dict[str, Optional[MarketAnalysis]]
     ) -> bool:
         """
-        Check if signal should be traded
+        Check if signal should be sent to Telegram (without execution limits)
 
         Args:
             symbol: Trading pair
@@ -60,21 +60,8 @@ class SignalFilter:
             analyses: Multi-timeframe analyses
 
         Returns:
-            True if signal passes all filters
+            True if signal passes quality filters (for notification)
         """
-        self._reset_daily_counts_if_needed()
-
-        # Check daily limit
-        if self.daily_signal_count >= self.max_signals_per_day:
-            logger.warning(f"{symbol}: ❌ Daily signal limit reached: {self.daily_signal_count}/{self.max_signals_per_day}")
-            return False
-
-        # Check per-pair limit
-        pair_count = self.pair_signal_count.get(symbol, 0)
-        if pair_count >= self.max_signals_per_pair:
-            logger.warning(f"{symbol}: ❌ Pair signal limit reached: {pair_count}/{self.max_signals_per_pair}")
-            return False
-
         # Check timeframe confluence
         confluence_result, confluence_ratio = self._check_timeframe_confluence(analyses, signal_type)
         if not confluence_result:
@@ -102,10 +89,69 @@ class SignalFilter:
             return False
         logger.info(f"{symbol}: ✅ No conflicting signals")
 
-        # All checks passed
-        self._record_signal(symbol, signal_type)
-        logger.info(f"{symbol}: ✅✅✅ ALL FILTERS PASSED - Signal approved!")
+        # All quality checks passed (no execution limits checked here)
+        logger.info(f"{symbol}: ✅✅✅ ALL QUALITY FILTERS PASSED - Signal will be sent to Telegram!")
         return True
+
+    def should_execute(
+        self,
+        symbol: str,
+        signal_type: str
+    ) -> bool:
+        """
+        Check if signal should be executed on MT5 (includes execution limits)
+
+        Args:
+            symbol: Trading pair
+            signal_type: BUY or SELL
+
+        Returns:
+            True if signal can be executed (within limits)
+        """
+        self._reset_daily_counts_if_needed()
+
+        # Check daily limit
+        if self.daily_signal_count >= self.max_signals_per_day:
+            logger.warning(f"{symbol}: ❌ Daily execution limit reached: {self.daily_signal_count}/{self.max_signals_per_day} (Telegram notification sent)")
+            return False
+
+        # Check per-pair limit
+        pair_count = self.pair_signal_count.get(symbol, 0)
+        if pair_count >= self.max_signals_per_pair:
+            logger.warning(f"{symbol}: ❌ Pair execution limit reached: {pair_count}/{self.max_signals_per_pair} (Telegram notification sent)")
+            return False
+
+        # All checks passed - can execute
+        self._record_signal(symbol, signal_type)
+        logger.info(f"{symbol}: ✅ EXECUTION APPROVED - Within limits!")
+        return True
+
+    def should_trade(
+        self,
+        symbol: str,
+        signal_type: str,
+        analyses: Dict[str, Optional[MarketAnalysis]]
+    ) -> bool:
+        """
+        Check if signal should be traded (legacy method - kept for compatibility)
+
+        This method checks both quality filters AND execution limits.
+        For new code, use should_notify() for Telegram and should_execute() for MT5.
+
+        Args:
+            symbol: Trading pair
+            signal_type: BUY or SELL
+            analyses: Multi-timeframe analyses
+
+        Returns:
+            True if signal passes all filters
+        """
+        # Check quality first
+        if not self.should_notify(symbol, signal_type, analyses):
+            return False
+
+        # Then check execution limits
+        return self.should_execute(symbol, signal_type)
 
     def _check_timeframe_confluence(
         self,

@@ -346,13 +346,19 @@ class MT5TradingBot:
                     'data': mtf_data.get(signal.timeframe, None)
                 }
 
-                # Send signal to Telegram (ONLY the signal, not execution confirmation)
+                # ALWAYS send signal to Telegram (regardless of execution limits)
                 await self.telegram_bot.send_signal(signal, chart_data)
 
-                # Execute trade automatically if enabled
+                # Execute trade automatically if enabled AND within execution limits
                 if self.auto_trading_enabled:
-                    # Execute first, then record (execution records its own performance)
-                    await self._execute_signal(signal)
+                    # Check execution limits before executing on MT5
+                    if self.signal_generator.signal_filter.should_execute(symbol, signal.signal_type):
+                        logger.info(f"{symbol}: Executing order on MT5...")
+                        await self._execute_signal(signal)
+                    else:
+                        logger.info(f"{symbol}: Signal sent to Telegram but NOT executed on MT5 (execution limits reached)")
+                        # Record the signal even if not executed
+                        self.performance.record_signal(symbol, signal.signal_type)
                 else:
                     # If not auto-trading, record the signal
                     self.performance.record_signal(symbol, signal.signal_type)
