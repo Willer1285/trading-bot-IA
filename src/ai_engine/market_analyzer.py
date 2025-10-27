@@ -199,29 +199,40 @@ class MarketAnalyzer:
     ) -> Tuple[str, float]:
         """
         Get consensus signal using the ensemble model.
-        This now acts as a wrapper around the main analyze method, 
+        This now acts as a wrapper around the main analyze method,
         but it processes multi-timeframe data to get a single prediction.
         """
         # We need to create a single feature vector that represents the multi-timeframe analysis
         # For simplicity, we'll use the features from the primary timeframe (e.g., 1h)
         # A more complex approach could involve combining features from all timeframes.
-        
+
+        # Log all timeframe signals for debugging
+        tf_signals = {tf: (a.signal, f"{a.confidence:.2%}") if a else None for tf, a in analyses.items()}
+        logger.info(f"Multi-timeframe signals: {tf_signals}")
+
         primary_analysis = None
+        primary_tf = None
         for tf in ['1h', '4h', '15m', '5m', '1m']:
             if tf in analyses and analyses[tf]:
                 primary_analysis = analyses[tf]
+                primary_tf = tf
                 break
-        
+
         if not primary_analysis:
+            logger.warning("No primary analysis found, returning HOLD")
             return 'HOLD', 0.0
 
         # The 'analyze' method already uses the ensemble model. We just need to extract its prediction.
         # The confidence is the probability of the predicted class.
         prediction = primary_analysis.prediction
         confidence = primary_analysis.confidence
-        
+
         signal_map = {0: 'SELL', 1: 'HOLD', 2: 'BUY'}
-        return signal_map.get(prediction, 'HOLD'), float(confidence)
+        consensus = signal_map.get(prediction, 'HOLD')
+
+        logger.info(f"Consensus: Using primary timeframe {primary_tf} → {consensus} with {confidence:.2%} confidence")
+
+        return consensus, float(confidence)
 
     def train(self, historical_data: pd.DataFrame):
         """

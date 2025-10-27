@@ -101,8 +101,31 @@ class Config:
 
     @property
     def timeframes_list(self) -> List[str]:
-        """Get timeframes from config"""
-        return self.get('market.timeframes', self.timeframes)
+        """Get timeframes from config and normalize to lowercase format"""
+        timeframes = self.get('market.timeframes', self.timeframes)
+
+        # Normalize MT5 format (M1, H1, D1) to lowercase format (1m, 1h, 1d)
+        tf_map = {
+            'M1': '1m', 'M5': '5m', 'M15': '15m', 'M30': '30m',
+            'H1': '1h', 'H4': '4h', 'H12': '12h',
+            'D1': '1d', 'W1': '1w', 'MN1': '1M'
+        }
+
+        normalized = []
+        for tf in timeframes:
+            tf_clean = tf.strip().upper()
+            # If it's already in lowercase format, keep it
+            if tf_clean.lower() in ['1m', '5m', '15m', '30m', '1h', '4h', '12h', '1d', '1w', '1M']:
+                normalized.append(tf.strip().lower())
+            # Otherwise try to normalize from MT5 format
+            elif tf_clean in tf_map:
+                normalized.append(tf_map[tf_clean])
+            else:
+                print(f"WARNING: Unknown timeframe format: {tf}, keeping as-is")
+                normalized.append(tf.strip())
+
+        print(f"INFO: Normalized timeframes: {normalized}")
+        return normalized
 
     @property
     def is_production(self) -> bool:

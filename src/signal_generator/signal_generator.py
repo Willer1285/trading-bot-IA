@@ -117,26 +117,6 @@ class SignalGenerator:
             TradingSignal or None
         """
         try:
-            # Get consensus signal
-            consensus_signal, consensus_confidence = self.analyzer.get_consensus_signal(
-                multi_tf_analyses
-            )
-
-            # Get primary timeframe analysis (1h or 4h preferred)
-            primary_analysis = None
-            for tf in ['4h', '1h', '15m']:
-                if tf in multi_tf_analyses and multi_tf_analyses[tf]:
-                    primary_analysis = multi_tf_analyses[tf]
-                    break
-            
-            strength = self.analyzer.calculate_signal_strength(primary_analysis) if primary_analysis else 0
-            
-            logger.info(f"Analysis result for {symbol}: Signal={consensus_signal}, Confidence={consensus_confidence:.2%}, Strength={strength}/100")
-
-            # Check if signal is actionable
-            if consensus_signal == 'HOLD':
-                return None
-
             # Get primary timeframe analysis (1h or 4h preferred)
             primary_analysis = None
             for tf in ['4h', '1h', '15m']:
@@ -148,23 +128,41 @@ class SignalGenerator:
                 logger.warning(f"{symbol}: No primary analysis available")
                 return None
 
+            # Get consensus signal
+            consensus_signal, consensus_confidence = self.analyzer.get_consensus_signal(
+                multi_tf_analyses
+            )
+
+            strength = self.analyzer.calculate_signal_strength(primary_analysis)
+
+            logger.info(f"Analysis result for {symbol}: Signal={consensus_signal}, Confidence={consensus_confidence:.2%}, Strength={strength}/100")
+
+            # Check if signal is actionable
+            if consensus_signal == 'HOLD':
+                logger.info(f"{symbol}: ⏸️  Consensus signal is HOLD, skipping signal generation")
+                return None
+
             # Check minimum thresholds
             if consensus_confidence < self.min_confidence:
-                logger.debug(
-                    f"{symbol}: Confidence {consensus_confidence:.2%} below threshold {self.min_confidence:.2%}"
+                logger.warning(
+                    f"{symbol}: ❌ Confidence {consensus_confidence:.2%} below threshold {self.min_confidence:.2%}"
                 )
                 return None
 
             if strength < self.min_strength:
-                logger.debug(
-                    f"{symbol}: Strength {strength} below threshold {self.min_strength}"
+                logger.warning(
+                    f"{symbol}: ❌ Strength {strength} below threshold {self.min_strength}"
                 )
                 return None
 
+            logger.info(f"{symbol}: ✅ Passed thresholds (Confidence: {consensus_confidence:.2%} >= {self.min_confidence:.2%}, Strength: {strength} >= {self.min_strength})")
+
             # Apply signal filters
             if not self.signal_filter.should_trade(symbol, consensus_signal, multi_tf_analyses):
-                logger.debug(f"{symbol}: Signal filtered out")
+                logger.warning(f"{symbol}: ❌ Signal filtered out by signal_filter.should_trade()")
                 return None
+
+            logger.info(f"{symbol}: ✅ Passed signal filter")
 
             # Calculate entry, stop loss, and take profit
             risk_params = self.risk_manager.calculate_risk_parameters(
