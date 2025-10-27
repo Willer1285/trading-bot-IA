@@ -1,6 +1,7 @@
 """
 Risk Manager
 Calculates risk parameters for trading signals
+Optimized for scalping strategy on synthetic indices (PainX/GainX)
 """
 
 from typing import Dict, List, Optional
@@ -14,7 +15,7 @@ class RiskManager:
 
     def __init__(
         self,
-        default_risk_reward: float = 2.0,
+        default_risk_reward: float = 1.2,  # Scalping: tighter RR ratio
         atr_multiplier_sl: float = 1.5,
         take_profit_levels: List[float] = None
     ):
@@ -22,15 +23,16 @@ class RiskManager:
         Initialize Risk Manager
 
         Args:
-            default_risk_reward: Default risk/reward ratio
+            default_risk_reward: Default risk/reward ratio (1.2 for scalping)
             atr_multiplier_sl: ATR multiplier for stop loss
-            take_profit_levels: Take profit multipliers
+            take_profit_levels: Take profit multipliers (optimized for scalping)
         """
         self.default_risk_reward = default_risk_reward
         self.atr_multiplier_sl = atr_multiplier_sl
-        self.take_profit_levels = take_profit_levels or [1.5, 2.0, 3.0]
+        # Scalping: Closer TPs for quick profits (1:1, 1:1.5, 1:2)
+        self.take_profit_levels = take_profit_levels or [1.0, 1.5, 2.0]
 
-        logger.info("Risk Manager initialized")
+        logger.info(f"Risk Manager initialized - Scalping mode (RR: 1:{default_risk_reward}, TP levels: {self.take_profit_levels})")
 
     def calculate_risk_parameters(
         self,

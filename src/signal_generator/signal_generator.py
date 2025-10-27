@@ -1,6 +1,7 @@
 """
 Signal Generator
 Generates high-probability trading signals from AI analysis
+Specialized for synthetic indices (PainX/GainX) scalping strategy
 """
 
 from typing import Dict, List, Optional
@@ -12,6 +13,7 @@ from loguru import logger
 from ai_engine.market_analyzer import MarketAnalysis, MarketAnalyzer
 from .signal_filter import SignalFilter
 from .risk_manager import RiskManager
+from .signal_tracker import SignalTracker
 
 
 @dataclass
@@ -90,6 +92,11 @@ class SignalGenerator:
         self.analyzer = analyzer
         self.signal_filter = signal_filter
         self.risk_manager = risk_manager
+        self.signal_tracker = SignalTracker(
+            min_time_between_signals=30,  # 30 minutes for scalping
+            max_price_distance_percent=0.5,  # 0.5% price movement invalidates signal
+            max_signal_age=120  # 2 hours max age
+        )
 
         self.min_confidence = min_confidence
         self.min_strength = min_strength
@@ -98,6 +105,48 @@ class SignalGenerator:
         self.signal_history: Dict[str, List[TradingSignal]] = {}
 
         logger.info("Signal Generator initialized")
+
+    def _is_painx_symbol(self, symbol: str) -> bool:
+        """Check if symbol is a PainX index"""
+        return 'PainX' in symbol or 'painx' in symbol.lower()
+
+    def _is_gainx_symbol(self, symbol: str) -> bool:
+        """Check if symbol is a GainX index"""
+        return 'GainX' in symbol or 'gainx' in symbol.lower()
+
+    def _validate_signal_direction(self, symbol: str, signal_type: str) -> bool:
+        """
+        Validate signal direction for synthetic indices
+
+        PainX: Only SELL signals (spikes down)
+        GainX: Only BUY signals (spikes up)
+
+        Args:
+            symbol: Trading symbol
+            signal_type: BUY or SELL
+
+        Returns:
+            True if signal direction is valid for this index
+        """
+        if self._is_painx_symbol(symbol):
+            if signal_type != 'SELL':
+                logger.warning(
+                    f"{symbol}: ❌ PainX index - Only SELL signals allowed "
+                    f"(spikes are downward). Blocking {signal_type} signal."
+                )
+                return False
+            logger.info(f"{symbol}: ✅ PainX index - SELL signal is valid (spike direction)")
+
+        elif self._is_gainx_symbol(symbol):
+            if signal_type != 'BUY':
+                logger.warning(
+                    f"{symbol}: ❌ GainX index - Only BUY signals allowed "
+                    f"(spikes are upward). Blocking {signal_type} signal."
+                )
+                return False
+            logger.info(f"{symbol}: ✅ GainX index - BUY signal is valid (spike direction)")
+
+        return True
 
     def generate_signal(
         self,
@@ -140,6 +189,19 @@ class SignalGenerator:
             # Check if signal is actionable
             if consensus_signal == 'HOLD':
                 logger.info(f"{symbol}: ⏸️  Consensus signal is HOLD, skipping signal generation")
+                return None
+
+            # Validate signal direction for synthetic indices (PainX/GainX)
+            if not self._validate_signal_direction(symbol, consensus_signal):
+                return None
+
+            # Check for duplicate signals
+            if not self.signal_tracker.should_send_signal(
+                symbol=symbol,
+                signal_type=consensus_signal,
+                entry_price=current_price,
+                current_price=current_price
+            ):
                 return None
 
             # Check minimum thresholds
@@ -205,6 +267,16 @@ class SignalGenerator:
             if symbol not in self.signal_history:
                 self.signal_history[symbol] = []
             self.signal_history[symbol].append(signal)
+
+            # Track signal to prevent duplicates
+            self.signal_tracker.track_signal(
+                symbol=symbol,
+                signal_type=consensus_signal,
+                entry_price=risk_params['entry_price'],
+                stop_loss=risk_params['stop_loss'],
+                take_profit=risk_params['take_profit_levels'][0] if risk_params['take_profit_levels'] else 0,
+                signal_id=signal_id
+            )
 
             logger.info(
                 f"Generated {consensus_signal} signal for {symbol} "
