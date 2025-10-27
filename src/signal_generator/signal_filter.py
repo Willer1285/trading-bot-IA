@@ -66,49 +66,57 @@ class SignalFilter:
 
         # Check daily limit
         if self.daily_signal_count >= self.max_signals_per_day:
-            logger.debug(f"Daily signal limit reached: {self.daily_signal_count}/{self.max_signals_per_day}")
+            logger.warning(f"{symbol}: ❌ Daily signal limit reached: {self.daily_signal_count}/{self.max_signals_per_day}")
             return False
 
         # Check per-pair limit
         pair_count = self.pair_signal_count.get(symbol, 0)
         if pair_count >= self.max_signals_per_pair:
-            logger.debug(f"{symbol}: Pair signal limit reached: {pair_count}/{self.max_signals_per_pair}")
+            logger.warning(f"{symbol}: ❌ Pair signal limit reached: {pair_count}/{self.max_signals_per_pair}")
             return False
 
         # Check timeframe confluence
-        if not self._check_timeframe_confluence(analyses, signal_type):
-            logger.debug(f"{symbol}: Insufficient timeframe confluence")
+        confluence_result, confluence_ratio = self._check_timeframe_confluence(analyses, signal_type)
+        if not confluence_result:
+            logger.warning(f"{symbol}: ❌ Insufficient timeframe confluence ({confluence_ratio:.1%} < 60%)")
             return False
+        logger.info(f"{symbol}: ✅ Timeframe confluence passed ({confluence_ratio:.1%} >= 60%)")
 
         # Check trend alignment
-        if not self._check_trend_alignment(analyses, signal_type):
-            logger.debug(f"{symbol}: Trend not aligned")
+        trend_result, trend_reason = self._check_trend_alignment(analyses, signal_type)
+        if not trend_result:
+            logger.warning(f"{symbol}: ❌ Trend not aligned - {trend_reason}")
             return False
+        logger.info(f"{symbol}: ✅ Trend alignment passed")
 
         # Check volatility
-        if not self._check_volatility(analyses):
-            logger.debug(f"{symbol}: Volatility too high")
+        volatility_result, volatility_reason = self._check_volatility(analyses)
+        if not volatility_result:
+            logger.warning(f"{symbol}: ❌ Volatility too high - {volatility_reason}")
             return False
+        logger.info(f"{symbol}: ✅ Volatility check passed")
 
         # Check for conflicting signals
         if self._has_conflicting_recent_signal(symbol, signal_type):
-            logger.debug(f"{symbol}: Conflicting recent signal")
+            logger.warning(f"{symbol}: ❌ Conflicting recent signal")
             return False
+        logger.info(f"{symbol}: ✅ No conflicting signals")
 
         # All checks passed
         self._record_signal(symbol, signal_type)
+        logger.info(f"{symbol}: ✅✅✅ ALL FILTERS PASSED - Signal approved!")
         return True
 
     def _check_timeframe_confluence(
         self,
         analyses: Dict[str, Optional[MarketAnalysis]],
         signal_type: str
-    ) -> bool:
+    ) -> tuple[bool, float]:
         """Check if multiple timeframes agree on signal"""
         valid_analyses = [a for a in analyses.values() if a is not None]
 
         if not valid_analyses:
-            return False
+            return False, 0.0
 
         # Count agreements
         agreements = sum(1 for a in valid_analyses if a.signal == signal_type)
@@ -116,24 +124,26 @@ class SignalFilter:
         # Need at least 60% agreement
         agreement_ratio = agreements / len(valid_analyses)
 
-        return agreement_ratio >= 0.6
+        return agreement_ratio >= 0.6, agreement_ratio
 
     def _check_trend_alignment(
         self,
         analyses: Dict[str, Optional[MarketAnalysis]],
         signal_type: str
-    ) -> bool:
+    ) -> tuple[bool, str]:
         """Check if signal aligns with higher timeframe trends"""
         # Get higher timeframe analysis (4h or 1d)
         higher_tf_analysis = None
+        selected_tf = None
 
         for tf in ['1d', '4h', '1h']:
             if tf in analyses and analyses[tf]:
                 higher_tf_analysis = analyses[tf]
+                selected_tf = tf
                 break
 
         if not higher_tf_analysis:
-            return True  # Can't check, so allow
+            return True, "No higher TF available"  # Can't check, so allow
 
         # For BUY signals, prefer uptrends
         # For SELL signals, prefer downtrends
@@ -142,21 +152,30 @@ class SignalFilter:
         price = indicators.get('price', 0)
         sma_50 = indicators.get('sma_50', 0)
 
+        if sma_50 == 0:
+            return True, "SMA50 not available"
+
+        percent_from_sma = ((price - sma_50) / sma_50) * 100
+
         if signal_type == 'BUY':
             # Allow BUY in uptrend or near support
-            return price >= sma_50 * 0.98  # Within 2% of SMA50
+            result = price >= sma_50 * 0.98  # Within 2% of SMA50
+            reason = f"Price {percent_from_sma:+.2f}% from SMA50 on {selected_tf} (need >= -2%)"
+            return result, reason
 
         else:  # SELL
             # Allow SELL in downtrend or near resistance
-            return price <= sma_50 * 1.02  # Within 2% of SMA50
+            result = price <= sma_50 * 1.02  # Within 2% of SMA50
+            reason = f"Price {percent_from_sma:+.2f}% from SMA50 on {selected_tf} (need <= +2%)"
+            return result, reason
 
-    def _check_volatility(self, analyses: Dict[str, Optional[MarketAnalysis]]) -> bool:
+    def _check_volatility(self, analyses: Dict[str, Optional[MarketAnalysis]]) -> tuple[bool, str]:
         """Check if volatility is acceptable"""
         # Get 1h analysis
         hourly_analysis = analyses.get('1h')
 
         if not hourly_analysis:
-            return True  # Can't check, so allow
+            return True, "No 1h analysis available"  # Can't check, so allow
 
         indicators = hourly_analysis.indicators
         atr = indicators.get('atr', 0)
@@ -165,7 +184,9 @@ class SignalFilter:
         # ATR should be less than 5% of price
         atr_percent = (atr / price) * 100 if price > 0 else 0
 
-        return atr_percent < 5.0
+        result = atr_percent < 5.0
+        reason = f"ATR {atr_percent:.2f}% of price (need < 5%)"
+        return result, reason
 
     def _has_conflicting_recent_signal(self, symbol: str, signal_type: str) -> bool:
         """Check for conflicting signals in recent history"""
