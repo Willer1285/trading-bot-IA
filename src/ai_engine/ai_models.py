@@ -79,15 +79,17 @@ class RandomForestModel(BaseModel):
 
     def fit(self, X: pd.DataFrame, y: pd.Series):
         """Train Random Forest"""
-        if y.nunique() < 2:
-            logger.warning(f"Skipping training for {self.name}: not enough classes in data.")
+        unique_classes = y.nunique()
+        if unique_classes < 2:
+            logger.error(f"Cannot train {self.name}: only {unique_classes} unique class(es) in data. Need at least 2.")
+            logger.error(f"Available classes: {y.unique()}")
             self.is_fitted = False
             return
-            
+
         X_scaled = self.scaler.fit_transform(X)
         self.model.fit(X_scaled, y)
         self.is_fitted = True
-        logger.info(f"{self.name} trained on {len(X)} samples")
+        logger.info(f"{self.name} trained successfully on {len(X)} samples with {unique_classes} classes")
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         """Predict class labels"""
@@ -135,15 +137,17 @@ class GradientBoostingModel(BaseModel):
 
     def fit(self, X: pd.DataFrame, y: pd.Series):
         """Train Gradient Boosting"""
-        if y.nunique() < 2:
-            logger.warning(f"Skipping training for {self.name}: not enough classes in data.")
+        unique_classes = y.nunique()
+        if unique_classes < 2:
+            logger.error(f"Cannot train {self.name}: only {unique_classes} unique class(es) in data. Need at least 2.")
+            logger.error(f"Available classes: {y.unique()}")
             self.is_fitted = False
             return
 
         X_scaled = self.scaler.fit_transform(X)
         self.model.fit(X_scaled, y)
         self.is_fitted = True
-        logger.info(f"{self.name} trained on {len(X)} samples")
+        logger.info(f"{self.name} trained successfully on {len(X)} samples with {unique_classes} classes")
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         """Predict class labels"""
@@ -353,19 +357,66 @@ class EnsembleModel:
                     logger.warning(f"Model file not found: {model_path}")
 
 
-def create_labels(df: pd.DataFrame, forward_window: int = 5, threshold: float = 0.02) -> pd.Series:
+def calculate_optimal_threshold(df: pd.DataFrame, forward_window: int = 5) -> float:
+    """
+    Calculate optimal threshold based on price volatility
+
+    Args:
+        df: DataFrame with price data
+        forward_window: Number of periods to look forward
+
+    Returns:
+        Optimal threshold value
+    """
+    # Calculate returns
+    returns = df['close'].pct_change().dropna()
+
+    # Calculate volatility (standard deviation of returns)
+    volatility = returns.std()
+
+    # Calculate average price movement over forward_window periods
+    rolling_changes = []
+    for i in range(len(df) - forward_window):
+        current_price = df['close'].iloc[i]
+        future_prices = df['close'].iloc[i+1:i+forward_window+1]
+        max_change = abs((future_prices.max() - current_price) / current_price)
+        min_change = abs((current_price - future_prices.min()) / current_price)
+        rolling_changes.append(max(max_change, min_change))
+
+    avg_movement = np.mean(rolling_changes) if rolling_changes else 0.02
+
+    # Use 30th percentile of movements as threshold
+    # This ensures we capture significant moves but not too conservative
+    threshold = np.percentile(rolling_changes, 30) if rolling_changes else 0.01
+
+    # Ensure threshold is reasonable (between 0.1% and 10%)
+    threshold = max(0.001, min(threshold, 0.10))
+
+    logger.info(f"Calculated optimal threshold: {threshold:.4f} (volatility: {volatility:.4f}, avg_movement: {avg_movement:.4f})")
+
+    return threshold
+
+
+def create_labels(df: pd.DataFrame, forward_window: int = 5, threshold: float = None) -> pd.Series:
     """
     Create labels for supervised learning
 
     Args:
         df: DataFrame with price data
         forward_window: Number of periods to look forward
-        threshold: Minimum price change to trigger signal (2% default)
+        threshold: Minimum price change to trigger signal (auto-calculated if None)
 
     Returns:
         Series with labels (0=SELL, 1=HOLD, 2=BUY)
     """
+    # Auto-calculate threshold if not provided
+    if threshold is None:
+        threshold = calculate_optimal_threshold(df, forward_window)
+
     labels = []
+    buy_count = 0
+    sell_count = 0
+    hold_count = 0
 
     for i in range(len(df) - forward_window):
         current_price = df['close'].iloc[i]
@@ -379,12 +430,22 @@ def create_labels(df: pd.DataFrame, forward_window: int = 5, threshold: float = 
 
         if price_change_up > threshold and price_change_up > price_change_down:
             labels.append(2)  # BUY
+            buy_count += 1
         elif price_change_down > threshold and price_change_down > price_change_up:
             labels.append(0)  # SELL
+            sell_count += 1
         else:
             labels.append(1)  # HOLD
+            hold_count += 1
 
     # Fill remaining with HOLD
     labels.extend([1] * forward_window)
+    hold_count += forward_window
+
+    # Log label distribution
+    total = len(labels)
+    logger.info(f"Label distribution - BUY: {buy_count} ({buy_count/total*100:.1f}%), "
+                f"SELL: {sell_count} ({sell_count/total*100:.1f}%), "
+                f"HOLD: {hold_count} ({hold_count/total*100:.1f}%)")
 
     return pd.Series(labels, index=df.index, name='label')

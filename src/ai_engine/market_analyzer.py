@@ -236,13 +236,27 @@ class MarketAnalyzer:
 
         try:
             logger.info("Starting model training...")
+            logger.info(f"Training data shape: {historical_data.shape}")
 
             # Extract features
             df_features = self.feature_engineer.extract_features(historical_data)
+            logger.info(f"Features extracted, shape: {df_features.shape}")
 
-            # Create labels
-            labels = create_labels(df_features, forward_window=5, threshold=0.02)
+            # Create labels with auto-calculated threshold
+            labels = create_labels(df_features, forward_window=5, threshold=None)
             df_features['label'] = labels
+
+            # Check label distribution
+            unique_labels = labels.unique()
+            label_counts = labels.value_counts()
+            logger.info(f"Unique labels in data: {unique_labels}")
+            logger.info(f"Label counts: {label_counts.to_dict()}")
+
+            # Validate we have enough diversity
+            if len(unique_labels) < 2:
+                logger.error("Not enough label diversity for training. All samples have the same label.")
+                logger.error("This indicates the data may not have enough price movement or the threshold is incorrect.")
+                return
 
             # Prepare data
             df_clean = self.feature_engineer.prepare_for_model(
@@ -258,6 +272,9 @@ class MarketAnalyzer:
             X = df_clean.drop('label', axis=1)
             y = df_clean['label']
 
+            # Final check on y distribution
+            logger.info(f"Final training set - X shape: {X.shape}, y unique values: {y.nunique()}")
+
             # Train ensemble
             self.model.fit(X, y)
 
@@ -266,6 +283,8 @@ class MarketAnalyzer:
 
         except Exception as e:
             logger.error(f"Error during training: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
 
     def _extract_indicator_summary(self, df: pd.DataFrame) -> Dict:
         """Extract key indicator values"""
