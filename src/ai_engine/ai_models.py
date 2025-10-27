@@ -345,16 +345,33 @@ class EnsembleModel:
                 model.save(str(model_path))
 
     def load_all(self, directory: str):
-        """Load all models"""
+        """Load all models and validate they were loaded successfully"""
         path = Path(directory)
 
+        models_loaded = 0
+        models_expected = 0
+
         for name, model in self.models.items():
-            if name != 'pattern_based':
+            if name != 'pattern_based':  # Don't load rule-based model
+                models_expected += 1
                 model_path = path / f"{name}.pkl"
                 if model_path.exists():
-                    model.load(str(model_path))
+                    try:
+                        model.load(str(model_path))
+                        models_loaded += 1
+                        logger.info(f"Successfully loaded model: {name}")
+                    except Exception as e:
+                        logger.error(f"Failed to load {name}: {e}")
                 else:
                     logger.warning(f"Model file not found: {model_path}")
+
+        # Raise exception if no models were loaded
+        if models_loaded == 0:
+            raise FileNotFoundError(f"No model files found in {directory}")
+
+        # Raise exception if some models are missing
+        if models_loaded < models_expected:
+            raise ValueError(f"Only {models_loaded}/{models_expected} models loaded successfully")
 
 
 def calculate_optimal_threshold(df: pd.DataFrame, forward_window: int = 5) -> float:
