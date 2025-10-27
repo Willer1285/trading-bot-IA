@@ -78,9 +78,9 @@ class SignalFilter:
         # Check timeframe confluence
         confluence_result, confluence_ratio = self._check_timeframe_confluence(analyses, signal_type)
         if not confluence_result:
-            logger.warning(f"{symbol}: ❌ Insufficient timeframe confluence ({confluence_ratio:.1%} < 60%)")
+            logger.warning(f"{symbol}: ❌ Insufficient timeframe confluence ({confluence_ratio:.1%} < 50%)")
             return False
-        logger.info(f"{symbol}: ✅ Timeframe confluence passed ({confluence_ratio:.1%} >= 60%)")
+        logger.info(f"{symbol}: ✅ Timeframe confluence passed ({confluence_ratio:.1%} >= 50%)")
 
         # Check trend alignment
         trend_result, trend_reason = self._check_trend_alignment(analyses, signal_type)
@@ -121,10 +121,10 @@ class SignalFilter:
         # Count agreements
         agreements = sum(1 for a in valid_analyses if a.signal == signal_type)
 
-        # Need at least 60% agreement
+        # Need at least 50% agreement (majority consensus)
         agreement_ratio = agreements / len(valid_analyses)
 
-        return agreement_ratio >= 0.6, agreement_ratio
+        return agreement_ratio >= 0.5, agreement_ratio
 
     def _check_trend_alignment(
         self,

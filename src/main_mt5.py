@@ -405,13 +405,17 @@ class MT5TradingBot:
             logger.info(f"Calculated lot size: {lot_size} (Risk: {self.risk_per_trade}%, SL: {stop_loss_pips} pips)")
 
             # Execute order
+            # MT5 comment limit: 31 characters
+            symbol_clean = signal.symbol.replace(" ", "")
+            comment = f"Bot-{symbol_clean}-{signal.signal_type}"[:31]
+
             result = self.order_executor.execute_market_order(
                 symbol=signal.symbol,
                 order_type=signal.signal_type,
                 volume=lot_size,
                 stop_loss=signal.stop_loss,
                 take_profit=signal.take_profit_levels[0] if signal.take_profit_levels else None,
-                comment=f"AI Bot - {signal.signal_id}"
+                comment=comment
             )
 
             if result:
