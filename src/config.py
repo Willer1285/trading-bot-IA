@@ -25,8 +25,12 @@ class ExchangeConfig(BaseModel):
 
 class AIConfig(BaseModel):
     model_type: str = Field(default_factory=lambda: os.getenv("AI_MODEL_TYPE", "ensemble"))
-    confidence_threshold: float = Field(default_factory=lambda: float(os.getenv("CONFIDENCE_THRESHOLD", "0.75")))
-    min_signal_score: int = Field(default_factory=lambda: int(os.getenv("MIN_SIGNAL_SCORE", "80")))
+    # Adjusted thresholds for realistic trading with synthetic indices
+    # Original values (0.75 confidence, 80 strength) were too restrictive for real-world trading
+    # New values allow signals with good confidence while maintaining quality control
+    # Based on observed ranges: confidence 44-67%, strength 16-23
+    confidence_threshold: float = Field(default_factory=lambda: float(os.getenv("CONFIDENCE_THRESHOLD", "0.55")))
+    min_signal_score: int = Field(default_factory=lambda: int(os.getenv("MIN_SIGNAL_SCORE", "15")))
 
 class DatabaseConfig(BaseModel):
     redis_host: str = Field(default_factory=lambda: os.getenv("REDIS_HOST", "localhost"))
