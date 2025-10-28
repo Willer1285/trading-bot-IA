@@ -205,3 +205,32 @@ _Stay disciplined and follow your risk management!_ 💪
     def get_timestamp() -> str:
         """Get formatted timestamp"""
         return datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+
+    @staticmethod
+    def format_break_even(position: Dict, new_sl: float) -> str:
+        """Formats a break even notification."""
+        return f"""
+        🛡️ **Protege tu Operación (Break Even)** 🛡️
+
+        **Símbolo:** `{position['symbol']}`
+        **Tipo:** {position['type']}
+
+        Mueve el SL para minimizar perdidas y asegurar ganancias.
+
+        **Nuevo SL:** `${new_sl:.5f}`
+        """
+
+    @staticmethod
+    def format_trailing_stop(position: Dict, new_sl: float) -> str:
+        """Formats a trailing stop notification."""
+        return f"""
+        📈 **Ganancia Asegurada (Trailing Stop)** 📈
+
+        **Símbolo:** `{position['symbol']}`
+        **Tipo:** {position['type']}
+        **Ticket:** `{position['ticket']}`
+
+        El Stop Loss ha sido actualizado para proteger las ganancias.
+
+        **Nuevo SL:** `${new_sl:.5f}`
+        """

@@ -91,9 +91,9 @@ class TelegramBot:
             )
 
             # Send chart if enabled and data available
-            if self.enable_charts and self.chart_generator and market_data:
+            if self.enable_charts and self.chart_generator and market_data and 'data' in market_data:
                 chart_image = self.chart_generator.generate_signal_chart(
-                    signal, market_data
+                    signal, market_data['data']
                 )
 
                 if chart_image:
@@ -306,3 +306,13 @@ class TelegramBot:
         """Stop queue processor"""
         self.is_running = False
         logger.info("Telegram bot stopped")
+
+    async def send_break_even_notification(self, position: Dict, new_sl: float) -> bool:
+        """Sends a break even notification."""
+        message = self.formatter.format_break_even(position, new_sl)
+        return await self.send_message(message)
+
+    async def send_trailing_stop_notification(self, position: Dict, new_sl: float) -> bool:
+        """Sends a trailing stop notification."""
+        message = self.formatter.format_trailing_stop(position, new_sl)
+        return await self.send_message(message)

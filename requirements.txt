@@ -27,6 +27,7 @@ aiofiles==23.2.1
 # Data Visualization
 plotly==5.18.0
 matplotlib==3.8.2
+mplfinance==0.12.9b7
 
 # Utilities
 python-dotenv==1.0.1

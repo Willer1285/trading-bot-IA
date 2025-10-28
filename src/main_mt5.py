@@ -60,6 +60,7 @@ class MT5TradingBot:
         # Risk management
         self.lot_size = config.mt5_lot_size
         self.max_open_positions = config.mt5_max_open_positions
+        self.break_even_activated = {} # Rastrea las operaciones con BE activado
 
         # Initialize all components
         self._initialize_components()
@@ -261,7 +262,10 @@ class MT5TradingBot:
                     await asyncio.sleep(10)
                     continue
 
-                # Analyze all symbols
+                # Gestionar posiciones abiertas (BE y TS)
+                await self._manage_open_positions()
+
+                # Analizar todos los símbolos para nuevas señales
                 for symbol in config.trading_symbols:
                     await self._analyze_and_execute(symbol)
 
@@ -399,12 +403,18 @@ class MT5TradingBot:
             symbol_clean = signal.symbol.replace(" ", "")
             comment = f"Bot-{symbol_clean}-{signal.signal_type}"[:31]
 
+            # Seleccionar el nivel de TP inicial según la configuración
+            tp_level_index = config.initial_take_profit_level - 1
+            initial_tp = None
+            if signal.take_profit_levels and len(signal.take_profit_levels) > tp_level_index:
+                initial_tp = signal.take_profit_levels[tp_level_index]
+
             result = self.order_executor.execute_market_order(
                 symbol=signal.symbol,
                 order_type=signal.signal_type,
                 volume=lot_size,
                 stop_loss=signal.stop_loss,
-                take_profit=signal.take_profit_levels[0] if signal.take_profit_levels else None,
+                take_profit=initial_tp,
                 comment=comment
             )
 
@@ -434,6 +444,83 @@ class MT5TradingBot:
             # Only log error internally (NOT sent to Telegram)
             logger.error(f"Error executing signal: {e}")
             self.performance.record_error("signal_execution", str(e), signal.symbol)
+
+    async def _manage_open_positions(self):
+        """Gestiona las posiciones abiertas para aplicar Break Even y Trailing Stop."""
+        if not config.enable_break_even and not config.enable_trailing_stop:
+            return
+
+        try:
+            open_positions = self.order_executor.get_open_positions()
+            if not open_positions:
+                return
+
+            logger.info(f"Gestionando {len(open_positions)} posiciones abiertas...")
+
+            for position in open_positions:
+                ticket = position['ticket']
+                symbol = position['symbol']
+                order_type = position['type']
+                open_price = position['price_open']
+                current_price = position['price_current']
+                current_sl = position['sl']
+
+                symbol_info = self.mt5_connector.get_symbol_info(symbol)
+                if not symbol_info:
+                    continue
+                
+                point_size = symbol_info['point']
+                profit_points = 0
+                if order_type == 'BUY':
+                    profit_points = (current_price - open_price) / point_size
+                else: # SELL
+                    profit_points = (open_price - current_price) / point_size
+
+                # --- Lógica de Break Even ---
+                if config.enable_break_even and ticket not in self.break_even_activated:
+                    if profit_points >= config.break_even_trigger_points:
+                        profit_lock_distance = config.break_even_profit_lock_points * point_size
+                        new_sl = 0
+                        if order_type == 'BUY':
+                            new_sl = open_price + profit_lock_distance
+                        else: # SELL
+                            new_sl = open_price - profit_lock_distance
+
+                        if current_sl != new_sl:
+                            logger.info(f"Activando Break Even para la operación #{ticket} en {symbol}. Nuevo SL: {new_sl:.5f}")
+                            modified = self.order_executor.modify_order(ticket, stop_loss=new_sl)
+                            if modified:
+                                self.break_even_activated[ticket] = True
+                                await self.telegram_bot.send_break_even_notification(position, new_sl)
+                        else:
+                            self.break_even_activated[ticket] = True
+                
+                # --- Lógica de Trailing Stop ---
+                if config.enable_trailing_stop:
+                    if profit_points >= config.trailing_stop_trigger_points:
+                        new_sl = 0
+                        distance = config.trailing_stop_distance_points * point_size
+                        
+                        if order_type == 'BUY':
+                            new_sl = current_price - distance
+                            # Solo mover el SL si es más alto que el SL actual
+                            if new_sl > current_sl:
+                                logger.info(f"Actualizando Trailing Stop para la operación #{ticket} en {symbol} a {new_sl:.5f}.")
+                                modified = self.order_executor.modify_order(ticket, stop_loss=new_sl)
+                                if modified:
+                                    await self.telegram_bot.send_trailing_stop_notification(position, new_sl)
+                        else: # SELL
+                            new_sl = current_price + distance
+                            # Solo mover el SL si es más bajo que el SL actual
+                            if new_sl < current_sl:
+                                logger.info(f"Actualizando Trailing Stop para la operación #{ticket} en {symbol} a {new_sl:.5f}.")
+                                modified = self.order_executor.modify_order(ticket, stop_loss=new_sl)
+                                if modified:
+                                    await self.telegram_bot.send_trailing_stop_notification(position, new_sl)
+
+        except Exception as e:
+            logger.error(f"Error al gestionar las posiciones abiertas: {e}")
+
 
     async def _run_periodic_tasks(self):
         """Run periodic maintenance tasks"""

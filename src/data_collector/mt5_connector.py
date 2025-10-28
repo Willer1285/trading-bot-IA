@@ -438,11 +438,13 @@ class MT5OrderExecutor:
                 "symbol": position.symbol,
             }
 
-            if stop_loss is not None:
-                request["sl"] = stop_loss
+            # Asegurarse de no borrar el TP o SL existente si no se proporciona uno nuevo
+            request["sl"] = stop_loss if stop_loss is not None else position.sl
+            request["tp"] = take_profit if take_profit is not None else position.tp
 
-            if take_profit is not None:
-                request["tp"] = take_profit
+            # No hacer nada si los valores no cambian
+            if request["sl"] == position.sl and request["tp"] == position.tp:
+                return True # Considerado exitoso ya que no se necesita ningún cambio
 
             result = mt5.order_send(request)
 

@@ -14,6 +14,7 @@ from ai_engine.market_analyzer import MarketAnalysis, MarketAnalyzer
 from .signal_filter import SignalFilter
 from .risk_manager import RiskManager
 from .signal_tracker import SignalTracker
+from config import config
 
 
 @dataclass
@@ -128,7 +129,7 @@ class SignalGenerator:
         Returns:
             True if signal direction is valid for this index
         """
-        if self._is_painx_symbol(symbol):
+        if self._is_painx_symbol(symbol) and config.enforce_painx_sell_only:
             if signal_type != 'SELL':
                 logger.warning(
                     f"{symbol}: ❌ PainX index - Only SELL signals allowed "
@@ -137,7 +138,7 @@ class SignalGenerator:
                 return False
             logger.info(f"{symbol}: ✅ PainX index - SELL signal is valid (spike direction)")
 
-        elif self._is_gainx_symbol(symbol):
+        elif self._is_gainx_symbol(symbol) and config.enforce_gainx_buy_only:
             if signal_type != 'BUY':
                 logger.warning(
                     f"{symbol}: ❌ GainX index - Only BUY signals allowed "
