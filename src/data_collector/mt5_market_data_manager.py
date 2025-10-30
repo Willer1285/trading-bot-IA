@@ -4,6 +4,7 @@ Manages real-time market data collection from MT5
 """
 
 import asyncio
+import os
 from typing import Dict, List, Optional, Set
 from datetime import datetime, timedelta
 import pandas as pd
@@ -90,17 +91,47 @@ class MT5MarketDataManager:
         logger.info("MT5 Market Data Manager stopped")
 
     async def _fetch_initial_data(self):
-        """Fetch initial historical data for all symbols and timeframes"""
-        logger.info("Fetching initial historical data from MT5...")
-
-        tasks = []
+        """Load initial historical data from local CSV files."""
+        logger.info("Loading initial historical data from local CSV files...")
+        
         for symbol in self.symbols:
             for timeframe in self.timeframes:
-                task = self._fetch_and_store(symbol, timeframe, limit=500)
-                tasks.append(task)
+                file_path = f"historical_data/{symbol}/{timeframe}.csv"
+                try:
+                    if os.path.exists(file_path):
+                        # Se lee el archivo CSV.
+                        df = pd.read_csv(file_path)
+                        
+                        # Se asegura de que la columna de timestamp se interprete correctamente.
+                        # El formato de fecha en los archivos exportados es 'YYYY.MM.DD HH:MI'.
+                        df['timestamp'] = pd.to_datetime(df['Fecha'], format='%Y.%m.%d %H:%M')
+                        df.set_index('timestamp', inplace=True)
+                        
+                        # Se renombran las columnas para que coincidan con el formato interno del bot.
+                        df.rename(columns={
+                            'Apertura': 'open',
+                            'Máximo': 'high',
+                            'Mínimo': 'low',
+                            'Cierre': 'close',
+                            'Volumen': 'volume'
+                        }, inplace=True)
+                        
+                        # Se seleccionan solo las columnas necesarias.
+                        df = df[['open', 'high', 'low', 'close', 'volume']]
+                        
+                        self.market_data[symbol][timeframe] = df
+                        logger.success(f"Loaded {len(df)} records for {symbol} [{timeframe}] from {file_path}")
+                    else:
+                        logger.warning(f"No local data file found for {symbol} [{timeframe}] at {file_path}. Will fetch from MT5.")
+                        # Si no hay archivo local, se intenta obtener de MT5 como fallback.
+                        await self._fetch_and_store(symbol, timeframe, limit=500)
 
-        await asyncio.gather(*tasks)
-        logger.info("Initial data fetch completed")
+                except Exception as e:
+                    logger.error(f"Error loading local data for {symbol} [{timeframe}]: {e}")
+                    # Si hay un error al leer el archivo, se intenta obtener de MT5.
+                    await self._fetch_and_store(symbol, timeframe, limit=500)
+
+        logger.info("Initial data loading process completed.")
 
     async def _fetch_and_store(self, symbol: str, timeframe: str, limit: int = 100):
         """

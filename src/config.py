@@ -33,25 +33,29 @@ class Config:
 
         # Configuración de IA y Señales
         self.confidence_threshold: float = float(os.getenv("CONFIDENCE_THRESHOLD", 0.75))
-        self.min_signal_score: int = int(os.getenv("MIN_SIGNAL_SCORE", 80))
 
         # Gestión de Riesgos
+        self.atr_period: int = int(os.getenv("ATR_PERIOD", 14))
         self.max_signals_per_day: int = int(os.getenv("MAX_SIGNALS_PER_DAY", 10))
         self.max_signals_per_pair: int = int(os.getenv("MAX_SIGNALS_PER_PAIR", 3))
-        self.stop_loss_points: int = int(os.getenv("STOP_LOSS_POINTS", 500))
-        self.take_profit_1_points: int = int(os.getenv("TAKE_PROFIT_1_POINTS", 1000))
-        self.take_profit_2_points: int = int(os.getenv("TAKE_PROFIT_2_POINTS", 2000))
-        self.initial_take_profit_level: int = int(os.getenv("INITIAL_TAKE_PROFIT_LEVEL", 1))
+        self.stop_loss_atr_multiplier: float = float(os.getenv("STOP_LOSS_ATR_MULTIPLIER", 1.5))
+        self.take_profit_1_atr_multiplier: float = float(os.getenv("TAKE_PROFIT_1_ATR_MULTIPLIER", 2.0))
+        self.take_profit_2_atr_multiplier: float = float(os.getenv("TAKE_PROFIT_2_ATR_MULTIPLIER", 4.0))
         self.enforce_gainx_buy_only: bool = os.getenv("ENFORCE_GAINX_BUY_ONLY", "true").lower() == "true"
         self.enforce_painx_sell_only: bool = os.getenv("ENFORCE_PAINX_SELL_ONLY", "true").lower() == "true"
 
         # Gestión de Trades
         self.enable_break_even: bool = os.getenv("ENABLE_BREAK_EVEN", "true").lower() == "true"
-        self.break_even_trigger_points: int = int(os.getenv("BREAK_EVEN_TRIGGER_POINTS", 3000))
-        self.break_even_profit_lock_points: int = int(os.getenv("BREAK_EVEN_PROFIT_LOCK_POINTS", 1000))
+        self.break_even_trigger_atr_multiplier: float = float(os.getenv("BREAK_EVEN_TRIGGER_ATR_MULTIPLIER", 1.0))
+        self.break_even_profit_lock_atr_multiplier: float = float(os.getenv("BREAK_EVEN_PROFIT_LOCK_ATR_MULTIPLIER", 0.2))
         self.enable_trailing_stop: bool = os.getenv("ENABLE_TRAILING_STOP", "true").lower() == "true"
-        self.trailing_stop_trigger_points: int = int(os.getenv("TRAILING_STOP_TRIGGER_POINTS", 6000))
-        self.trailing_stop_distance_points: int = int(os.getenv("TRAILING_STOP_DISTANCE_POINTS", 4000))
+        self.trailing_stop_trigger_atr_multiplier: float = float(os.getenv("TRAILING_STOP_TRIGGER_ATR_MULTIPLIER", 2.0))
+        self.trailing_stop_distance_atr_multiplier: float = float(os.getenv("TRAILING_STOP_DISTANCE_ATR_MULTIPLIER", 1.5))
+
+        # Configuración de Lotaje Dinámico
+        self.enable_dynamic_lot_size: bool = os.getenv("ENABLE_DYNAMIC_LOT_SIZE", "true").lower() == "true"
+        self.min_lot_size: float = float(os.getenv("MIN_LOT_SIZE", 0.10))
+        self.max_lot_size: float = float(os.getenv("MAX_LOT_SIZE", 1.00))
 
         # Configuración de Logging
         self.log_level: str = os.getenv("LOG_LEVEL", "INFO")

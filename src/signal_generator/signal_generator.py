@@ -27,12 +27,13 @@ class TradingSignal:
     stop_loss: float
     take_profit_levels: List[float]
     confidence: float
-    strength: int  # 0-100
     timeframe: str
     timestamp: datetime
     analysis: Dict
     risk_reward_ratio: float
     reason: str
+    lot_size: float
+    atr_at_signal: float
 
     def to_dict(self) -> Dict:
         """Convert to dictionary"""
@@ -77,8 +78,7 @@ class SignalGenerator:
         analyzer: MarketAnalyzer,
         signal_filter: SignalFilter,
         risk_manager: RiskManager,
-        min_confidence: float = 0.75,
-        min_strength: int = 80
+        min_confidence: float = 0.75
     ):
         """
         Initialize Signal Generator
@@ -88,7 +88,6 @@ class SignalGenerator:
             signal_filter: Signal filter instance
             risk_manager: Risk manager instance
             min_confidence: Minimum confidence threshold
-            min_strength: Minimum signal strength
         """
         self.analyzer = analyzer
         self.signal_filter = signal_filter
@@ -100,7 +99,6 @@ class SignalGenerator:
         )
 
         self.min_confidence = min_confidence
-        self.min_strength = min_strength
 
         self.generated_signals: List[TradingSignal] = []
         self.signal_history: Dict[str, List[TradingSignal]] = {}
@@ -153,7 +151,8 @@ class SignalGenerator:
         self,
         symbol: str,
         multi_tf_analyses: Dict[str, Optional[MarketAnalysis]],
-        current_price: float
+        current_price: float,
+        market_data: Dict[str, pd.DataFrame]
     ) -> Optional[TradingSignal]:
         """
         Generate trading signal from multi-timeframe analysis
@@ -178,12 +177,11 @@ class SignalGenerator:
                 logger.warning(f"{symbol}: No primary analysis available")
                 return None
 
-            # Usar directamente la señal, confianza y fuerza del análisis primario
+            # Usar directamente la señal y confianza del análisis primario
             signal_type = primary_analysis.signal
             confidence = primary_analysis.confidence
-            strength = primary_analysis.strength
 
-            logger.info(f"Analysis result for {symbol}: Signal={signal_type}, Confidence={confidence:.2%}, Strength={strength}/100")
+            logger.info(f"Analysis result for {symbol}: Signal={signal_type}, Confidence={confidence:.2%}")
 
             # Check if signal is actionable
             if signal_type == 'HOLD':
@@ -210,13 +208,7 @@ class SignalGenerator:
                 )
                 return None
 
-            if strength < self.min_strength:
-                logger.warning(
-                    f"{symbol}: ❌ Strength {strength} below threshold {self.min_strength}"
-                )
-                return None
-
-            logger.info(f"{symbol}: ✅ Passed thresholds (Confidence: {confidence:.2%} >= {self.min_confidence:.2%}, Strength: {strength} >= {self.min_strength})")
+            logger.info(f"{symbol}: ✅ Passed confidence threshold (Confidence: {confidence:.2%} >= {self.min_confidence:.2%})")
 
             # Apply signal quality filters (for Telegram notification)
             # Note: Execution limits are checked separately in main_mt5.py before executing on MT5
@@ -231,7 +223,9 @@ class SignalGenerator:
                 symbol=symbol,
                 signal_type=signal_type,
                 entry_price=current_price,
-                analysis=primary_analysis
+                analysis=primary_analysis,
+                confidence=confidence,
+                full_market_data=market_data[primary_analysis.timeframe] # Pass the correct dataframe
             )
 
             if not risk_params:
@@ -253,12 +247,13 @@ class SignalGenerator:
                 stop_loss=risk_params['stop_loss'],
                 take_profit_levels=risk_params['take_profit_levels'],
                 confidence=confidence,
-                strength=strength,
                 timeframe=primary_analysis.timeframe,
                 timestamp=datetime.utcnow(),
                 analysis=primary_analysis.to_dict(),
                 risk_reward_ratio=risk_params['risk_reward_ratio'],
-                reason=reason
+                reason=reason,
+                lot_size=risk_params['lot_size'],
+                atr_at_signal=risk_params['atr_at_signal']
             )
 
             # Store signal
@@ -279,7 +274,7 @@ class SignalGenerator:
 
             logger.info(
                 f"Generated {signal_type} signal for {symbol} "
-                f"(confidence: {confidence:.2%}, strength: {strength})"
+                f"(confidence: {confidence:.2%})"
             )
 
             return signal

@@ -11,7 +11,7 @@ from datetime import datetime
 
 from .feature_engineering import FeatureEngineer
 from .technical_indicators import TechnicalIndicators
-from .ai_models import EnsembleModel, create_labels
+from .ai_models import EnsembleModel
 
 
 class MarketAnalysis:
@@ -27,7 +27,6 @@ class MarketAnalysis:
         indicators: Dict,
         patterns: Dict[str, bool],
         support_resistance: Dict[str, float],
-        strength: int,  # Nuevo atributo para el score de fuerza
         timestamp: datetime
     ):
         self.symbol = symbol
@@ -38,7 +37,6 @@ class MarketAnalysis:
         self.indicators = indicators
         self.patterns = patterns
         self.support_resistance = support_resistance
-        self.strength = strength  # Score de 0 a 100
         self.timestamp = timestamp
 
     @property
@@ -59,7 +57,6 @@ class MarketAnalysis:
             'timeframe': self.timeframe,
             'signal': self.signal,
             'confidence': round(self.confidence, 4),
-            'strength': self.strength,
             'probabilities': {
                 'sell': round(self.probabilities['sell'], 4),
                 'hold': round(self.probabilities['hold'], 4),
@@ -103,9 +100,27 @@ class MarketAnalyzer:
                 return None
 
             latest_features = df_clean.tail(1)
-            prediction = self.model.predict(latest_features)[0]
-            confidence = self.model.get_confidence(latest_features)[0]
-            probabilities = self.model.predict_proba(latest_features)[0]
+
+            # --- Lógica de Predicción Híbrida ---
+            # 1. Obtener la dirección del modelo primario (basado en reglas)
+            primary_prediction = self.model.base_models['pattern_based'].predict(latest_features)[0]
+
+            if primary_prediction == 1:  # HOLD
+                prediction = 1
+                confidence = 0.6  # Confianza moderada para mantener
+                probabilities = np.array([0.2, 0.6, 0.2]) # SELL, HOLD, BUY
+            else:
+                # 2. Si hay una señal de COMPRA/VENTA, usar el meta-modelo para obtener la confianza
+                meta_confidence = self.model.predict_proba(latest_features)[0][1] # Probabilidad de que la señal sea buena
+                
+                prediction = primary_prediction
+                confidence = meta_confidence
+
+                # 3. Construir el array de probabilidades final
+                if prediction == 2: # BUY
+                    probabilities = np.array([(1 - confidence) / 2, (1 - confidence) / 2, confidence])
+                else: # SELL
+                    probabilities = np.array([confidence, (1 - confidence) / 2, (1 - confidence) / 2])
 
             indicators = self._extract_indicator_summary(df)
             patterns = self.technical_indicators.detect_patterns(df)
@@ -115,83 +130,15 @@ class MarketAnalyzer:
                 symbol=symbol, timeframe=timeframe, prediction=int(prediction),
                 confidence=float(confidence), probabilities={'sell': float(probabilities[0]), 'hold': float(probabilities[1]), 'buy': float(probabilities[2])},
                 indicators=indicators, patterns=patterns, support_resistance=support_resistance,
-                strength=0, timestamp=datetime.utcnow()
+                timestamp=datetime.utcnow()
             )
 
-            strength_score = self._calculate_signal_strength(temp_analysis)
-            temp_analysis.strength = strength_score
-
-            logger.debug(f"Análisis para {symbol} {timeframe}: {temp_analysis.signal} (Confianza: {temp_analysis.confidence:.2%}, Fuerza: {temp_analysis.strength}/100)")
+            logger.debug(f"Análisis para {symbol} {timeframe}: {temp_analysis.signal} (Confianza: {temp_analysis.confidence:.2%})")
             return temp_analysis
 
         except Exception as e:
             logger.error(f"Error analizando {symbol} {timeframe}: {e}")
             return None
-
-    def _calculate_signal_strength(self, analysis: MarketAnalysis) -> int:
-        """
-        Calcula la fuerza de la señal (0-100) usando un sistema de puntuación granular.
-        """
-        score = 0
-        reason = []
-
-        # 1. Puntuación Base de la IA (Máx 30 puntos)
-        if analysis.is_actionable:
-            score += 15
-            reason.append("IA Accionable (+15)")
-            confidence_score = round(analysis.confidence * 15)
-            score += confidence_score
-            reason.append(f"Confianza IA {analysis.confidence:.0%} (+{confidence_score})")
-
-        # 2. Puntuación de Momento (Máx 40 puntos)
-        indicators = analysis.indicators
-        rsi = indicators.get('rsi_14', 50)
-        macd = indicators.get('macd', 0)
-        macd_signal = indicators.get('macd_signal', 0)
-
-        if analysis.signal == 'BUY':
-            # RSI: Más puntos cuanto más bajo (mejor si < 40)
-            if rsi < 40:
-                rsi_score = round((40 - rsi) / 40 * 20)
-                score += rsi_score
-                reason.append(f"RSI bajo ({rsi:.1f}) (+{rsi_score})")
-            # MACD: Puntos si hay un cruce alcista
-            if macd > macd_signal:
-                score += 20
-                reason.append("Cruce MACD (+20)")
-        elif analysis.signal == 'SELL':
-            # RSI: Más puntos cuanto más alto (mejor si > 60)
-            if rsi > 60:
-                rsi_score = round((rsi - 60) / 40 * 20)
-                score += rsi_score
-                reason.append(f"RSI alto ({rsi:.1f}) (+{rsi_score})")
-            # MACD: Puntos si hay un cruce bajista
-            if macd < macd_signal:
-                score += 20
-                reason.append("Cruce MACD (+20)")
-
-        # 3. Puntuación de Tendencia (Máx 30 puntos)
-        price = indicators.get('price', 0)
-        sma_50 = indicators.get('sma_50', 0)
-        adx = indicators.get('adx', 0)
-
-        # Alineación con la media móvil
-        if sma_50 > 0:
-            if analysis.signal == 'BUY' and price > sma_50:
-                score += 15
-                reason.append("Precio > SMA50 (+15)")
-            elif analysis.signal == 'SELL' and price < sma_50:
-                score += 15
-                reason.append("Precio < SMA50 (+15)")
-        
-        # Fuerza de la tendencia con ADX
-        if adx > 25:
-            score += 15
-            reason.append(f"ADX > 25 ({adx:.0f}) (+15)")
-
-        final_score = min(int(score), 100)
-        logger.debug(f"Cálculo de Fuerza para {analysis.symbol} ({analysis.signal}): {final_score}/100. Razón: {', '.join(reason)}")
-        return final_score
 
     def analyze_multi_timeframe(
         self,
@@ -204,33 +151,6 @@ class MarketAnalyzer:
             analysis = self.analyze(df, symbol, timeframe)
             results[timeframe] = analysis
         return results
-
-    def train(self, historical_data: pd.DataFrame):
-        """Entrena los modelos de IA con datos históricos."""
-        if not self.enable_training:
-            logger.warning("El entrenamiento está deshabilitado")
-            return
-        try:
-            logger.info("Iniciando entrenamiento del modelo...")
-            df_features = self.feature_engineer.extract_features(historical_data)
-            labels = create_labels(df_features, forward_window=5, threshold=None)
-            df_features['label'] = labels
-            if len(labels.unique()) < 2:
-                logger.error("No hay suficiente diversidad de etiquetas para el entrenamiento.")
-                return
-            df_clean = self.feature_engineer.prepare_for_model(df_features, target_column='label')
-            if len(df_clean) < 100:
-                logger.warning("Datos insuficientes para el entrenamiento")
-                return
-            X = df_clean.drop('label', axis=1)
-            y = df_clean['label']
-            self.model.fit(X, y)
-            self.is_trained = True
-            logger.info(f"Entrenamiento del modelo completado en {len(X)} muestras")
-        except Exception as e:
-            logger.error(f"Error durante el entrenamiento: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
 
     def _extract_indicator_summary(self, df: pd.DataFrame) -> Dict:
         """Extrae los valores clave de los indicadores."""

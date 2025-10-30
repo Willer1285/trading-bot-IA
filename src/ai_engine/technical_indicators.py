@@ -13,8 +13,7 @@ from loguru import logger
 class TechnicalIndicators:
     """Calculate technical indicators for market analysis"""
 
-    @staticmethod
-    def calculate_all(df: pd.DataFrame) -> pd.DataFrame:
+    def calculate_all(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Calculate all technical indicators
 
@@ -31,19 +30,19 @@ class TechnicalIndicators:
 
         try:
             # Trend Indicators
-            result = TechnicalIndicators._add_trend_indicators(result)
+            result = self._add_trend_indicators(result)
 
             # Momentum Indicators
-            result = TechnicalIndicators._add_momentum_indicators(result)
+            result = self._add_momentum_indicators(result)
 
             # Volatility Indicators
-            result = TechnicalIndicators._add_volatility_indicators(result)
+            result = self._add_volatility_indicators(result)
 
             # Volume Indicators
-            result = TechnicalIndicators._add_volume_indicators(result)
+            result = self._add_volume_indicators(result)
 
             # Custom Indicators
-            result = TechnicalIndicators._add_custom_indicators(result)
+            result = self._add_custom_indicators(result)
 
             logger.debug(f"Calculated {len(result.columns) - 6} technical indicators")
 
@@ -52,8 +51,7 @@ class TechnicalIndicators:
 
         return result
 
-    @staticmethod
-    def _add_trend_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    def _add_trend_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add trend indicators"""
 
         # Simple Moving Averages
@@ -89,8 +87,7 @@ class TechnicalIndicators:
 
         return df
 
-    @staticmethod
-    def _add_momentum_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    def _add_momentum_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add momentum indicators"""
 
         # RSI
@@ -120,10 +117,10 @@ class TechnicalIndicators:
 
         return df
 
-    @staticmethod
-    def _add_volatility_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    def _add_volatility_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add volatility indicators"""
-
+        from src.config import config
+        
         # Bollinger Bands
         bollinger = ta.volatility.BollingerBands(df['close'])
         df['bb_high'] = bollinger.bollinger_hband()
@@ -133,10 +130,10 @@ class TechnicalIndicators:
         df['bb_pband'] = bollinger.bollinger_pband()
 
         # ATR (Average True Range)
-        df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'])
+        df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=config.atr_period)
 
         # Keltner Channel
-        keltner = ta.volatility.KeltnerChannel(df['high'], df['low'], df['close'])
+        keltner = ta.volatility.KeltnerChannel(df['high'], df['low'], df['close'], window=config.atr_period)
         df['kc_high'] = keltner.keltner_channel_hband()
         df['kc_mid'] = keltner.keltner_channel_mband()
         df['kc_low'] = keltner.keltner_channel_lband()
@@ -149,8 +146,7 @@ class TechnicalIndicators:
 
         return df
 
-    @staticmethod
-    def _add_volume_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    def _add_volume_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add volume indicators"""
 
         # On-Balance Volume (OBV)
@@ -178,8 +174,7 @@ class TechnicalIndicators:
 
         return df
 
-    @staticmethod
-    def _add_custom_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    def _add_custom_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add custom indicators"""
 
         # Price momentum

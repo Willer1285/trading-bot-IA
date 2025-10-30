@@ -30,9 +30,8 @@ class MessageFormatter:
             signal_emoji = "🔴"
             direction_emoji = "📉"
 
-        # Format confidence and strength
+        # Format confidence
         confidence_bar = MessageFormatter._create_bar(signal.confidence * 100, 100)
-        strength_bar = MessageFormatter._create_bar(signal.strength, 100)
 
         # Create message
         message = f"""
@@ -66,9 +65,6 @@ class MessageFormatter:
 **Confidence:** {signal.confidence:.1%}
 {confidence_bar}
 
-**Signal Strength:** {signal.strength}/100
-{strength_bar}
-
 💡 **Reason:**
 _{signal.reason}_
 
@@ -95,7 +91,6 @@ _Powered by AI Trading Bot_ 🤖
         buy_signals = summary.get('buy_signals', 0)
         sell_signals = summary.get('sell_signals', 0)
         avg_confidence = summary.get('avg_confidence', 0)
-        avg_strength = summary.get('avg_strength', 0)
 
         message = f"""
 📊 **DAILY SUMMARY**
@@ -107,7 +102,6 @@ _Powered by AI Trading Bot_ 🤖
 🔴 **Sell Signals:** {sell_signals}
 
 **Average Confidence:** {avg_confidence:.1%}
-**Average Strength:** {avg_strength:.0f}/100
 
 ━━━━━━━━━━━━━━━━━━━━
 ⏰ {datetime.utcnow().strftime('%Y-%m-%d')}

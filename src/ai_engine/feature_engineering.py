@@ -30,7 +30,13 @@ class FeatureEngineer:
         """
         if df.empty or len(df) < 50:
             logger.warning("Insufficient data for feature extraction")
-            return df
+            # Se devuelve una copia del DataFrame con una columna 'atr' nula.
+            # Esto previene errores de tipo KeyError en módulos posteriores si no hay datos suficientes
+            # para calcular los indicadores técnicos.
+            df_with_nan = df.copy()
+            if 'atr' not in df_with_nan.columns:
+                df_with_nan['atr'] = np.nan
+            return df_with_nan
 
         try:
             # Start with a copy to avoid modifying the original DataFrame
@@ -193,28 +199,27 @@ class FeatureEngineer:
         Returns:
             Cleaned DataFrame ready for ML
         """
+        # Se crea una copia para no modificar el DataFrame original.
         df_clean = df.copy()
 
-        # Select only feature columns
-        if self.feature_columns:
-            cols_to_keep = self.feature_columns.copy()
-            if target_column and target_column in df_clean.columns:
-                cols_to_keep.append(target_column)
-
-            # Keep only existing columns
-            cols_to_keep = [col for col in cols_to_keep if col in df_clean.columns]
-            df_clean = df_clean[cols_to_keep]
-
-        # Handle missing values
+        # La selección de columnas ahora se realiza fuera de esta función.
+        # Esta función se centra únicamente en la limpieza de los datos que recibe.
+        
+        # Se manejan los valores ausentes (NaN) de forma más robusta.
+        # Primero, se rellenan hacia adelante para propagar el último valor válido.
         if fill_method == 'ffill':
-            df_clean = df_clean.ffill()
-        elif fill_method == 'bfill':
-            df_clean = df_clean.bfill()
-        elif fill_method == 'zero':
-            df_clean = df_clean.fillna(0)
+            df_clean.ffill(inplace=True)
+        
+        # Luego, se rellenan hacia atrás para cubrir los NaN que pudieran quedar al principio.
+        df_clean.bfill(inplace=True)
+        
+        # Si se especifica 'zero', se rellenan los NaN restantes con 0.
+        if fill_method == 'zero':
+            df_clean.fillna(0, inplace=True)
 
-        # Remove any remaining NaN
-        df_clean = df_clean.dropna()
+        # Se eliminan las filas que todavía contengan algún NaN después del relleno.
+        # Esto es crucial para asegurar que no haya datos inválidos.
+        df_clean.dropna(inplace=True)
 
         # Replace infinite values
         df_clean = df_clean.replace([np.inf, -np.inf], 0)
@@ -224,3 +229,35 @@ class FeatureEngineer:
     def get_feature_importance_names(self) -> List[str]:
         """Get list of feature names for importance analysis"""
         return self.feature_columns.copy()
+
+    def create_sequences(self, X: pd.DataFrame, y: pd.Series, default_sequence_length: int = 50) -> (np.ndarray, np.ndarray):
+        """
+        Create sequences for time-series models like LSTMs.
+        Adjusts sequence length if data is insufficient.
+        """
+        n_samples = len(X)
+        
+        # Adjust sequence length to be at most 80% of the total samples, but not less than a minimum of 10
+        sequence_length = min(default_sequence_length, int(n_samples * 0.8))
+        sequence_length = max(10, sequence_length)
+
+        if n_samples <= sequence_length:
+            logger.warning(f"Not enough data ({n_samples} samples) to create sequences of length {sequence_length}. Returning empty arrays.")
+            return np.array([]), np.array([])
+
+        X_values = X.values
+        y_values = y.values
+        X_sequences, y_sequences = [], []
+
+        logger.info(f"Creating sequences with length {sequence_length} from {n_samples} data points.")
+
+        for i in range(n_samples - sequence_length):
+            X_sequences.append(X_values[i:(i + sequence_length)])
+            y_sequences.append(y_values[i + sequence_length])
+        
+        X_seq_array = np.array(X_sequences)
+        y_seq_array = np.array(y_sequences)
+
+        logger.info(f"Created {X_seq_array.shape[0]} sequences.")
+        
+        return X_seq_array, y_seq_array

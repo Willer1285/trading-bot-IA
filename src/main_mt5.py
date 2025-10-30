@@ -116,28 +116,9 @@ class MT5TradingBot:
                 self.analyzer.load_models('models')
                 logger.info("Loaded pre-trained models")
             except Exception as e:
-                logger.warning(f"Could not load models: {e}. Training new models...")
-                self.analyzer.enable_training = True
-                
-                # Fetch data for training
-                logger.info("Fetching historical data for initial training...")
-                training_symbol = config.trading_symbols[0]
-                training_timeframe = '1h'
-                
-                # Use the connector to get historical data
-                training_df = self.mt5_connector.get_historical_data(
-                    training_symbol,
-                    training_timeframe,
-                    number_of_candles=2000
-                )
-                
-                if training_df is not None and not training_df.empty:
-                    self.analyzer.train(training_df)
-                    logger.info("Initial model training completed.")
-                    # Optional: Save the newly trained models
-                    self.analyzer.save_models('models')
-                else:
-                    logger.error("Could not fetch data for training. Bot will use rule-based models only.")
+                logger.critical(f"Could not load models: {e}. The bot cannot function without trained models.")
+                logger.critical("Please run train_models.py to train and save the models before starting the bot.")
+                raise SystemExit("CRITICAL: AI Models not found. Exiting.")
 
             # Signal components
             logger.info("Initializing signal generator...")
@@ -152,8 +133,7 @@ class MT5TradingBot:
                 analyzer=self.analyzer,
                 signal_filter=signal_filter,
                 risk_manager=risk_manager,
-                min_confidence=config.confidence_threshold,
-                min_strength=config.min_signal_score
+                min_confidence=config.confidence_threshold
             )
 
             # Telegram bot
@@ -198,8 +178,7 @@ class MT5TradingBot:
                 f"**Auto-Trading:** {'✅ ENABLED' if self.auto_trading_enabled else '❌ DISABLED'}\n"
                 f"**Lot Size:** {self.lot_size} lots\n"
                 f"**Max Positions:** {self.max_open_positions}\n"
-                f"**Min Confidence:** {config.confidence_threshold:.0%}\n"
-                f"**Min Signal Strength:** {config.min_signal_score}/100"
+                f"**Min Confidence:** {config.confidence_threshold:.0%}"
             )
 
             # Start market data collection
@@ -294,6 +273,12 @@ class MT5TradingBot:
             symbol: Trading symbol to analyze
         """
         try:
+            # VERIFICACIÓN INICIAL: Si ya hay una posición abierta para este símbolo, no se analiza.
+            # Esto previene señales duplicadas mientras una operación está activa.
+            if self.order_executor.get_open_positions(symbol):
+                logger.info(f"Skipping analysis for {symbol}: An open position already exists.")
+                return
+
             start_time = datetime.utcnow()
 
             # Get multi-timeframe data
@@ -303,9 +288,16 @@ class MT5TradingBot:
                 logger.debug(f"{symbol}: No data available yet")
                 return
 
+            # Se enriquece cada DataFrame de timeframe con características técnicas.
+            # Esto es crucial para que el RiskManager tenga acceso a la columna 'atr'.
+            enriched_mtf_data = {
+                tf: self.analyzer.feature_engineer.extract_features(df)
+                for tf, df in mtf_data.items()
+            }
+
             logger.info(f"Analyzing {symbol}...")
-            # Analyze all timeframes
-            analyses = self.analyzer.analyze_multi_timeframe(mtf_data, symbol)
+            # Analizar todos los timeframes usando los datos ya enriquecidos.
+            analyses = self.analyzer.analyze_multi_timeframe(enriched_mtf_data, symbol)
 
             # Get current price
             current_price = self.market_data_manager.get_current_price(symbol)
@@ -318,33 +310,33 @@ class MT5TradingBot:
             signal = self.signal_generator.generate_signal(
                 symbol=symbol,
                 multi_tf_analyses=analyses,
-                current_price=current_price
+                current_price=current_price,
+                market_data=enriched_mtf_data  # Se pasan los datos enriquecidos
             )
 
             # If signal generated
             if signal:
-                logger.success(f"Signal generated for {symbol}: {signal.signal_type} | Confidence: {signal.confidence:.2%} | Strength: {signal.strength}/100")
-
-                # Prepare market data for chart
-                chart_data = {
-                    'data': mtf_data.get(signal.timeframe, None)
-                }
-
-                # ALWAYS send signal to Telegram (regardless of execution limits)
-                await self.telegram_bot.send_signal(signal, chart_data)
-
-                # Execute trade automatically if enabled AND within execution limits
-                if self.auto_trading_enabled:
-                    # Check execution limits before executing on MT5
-                    if self.signal_generator.signal_filter.should_execute(symbol, signal.signal_type):
-                        logger.info(f"{symbol}: Executing order on MT5...")
-                        await self._execute_signal(signal)
+                # La decisión de ejecutar se toma ANTES de notificar.
+                # Se comprueba si el auto-trading está activado y si la señal pasa los filtros de ejecución.
+                if self.auto_trading_enabled and self.signal_generator.signal_filter.should_execute(symbol, signal.signal_type):
+                    logger.success(f"Signal for {symbol} passed filters. Executing and notifying.")
+                    
+                    # 1. Ejecutar la operación en MT5.
+                    execution_result = await self._execute_signal(signal)
+                    
+                    # 2. Notificar a Telegram SOLO si la ejecución fue exitosa.
+                    if execution_result:
+                        logger.info(f"Sending successful execution of {symbol} to Telegram.")
+                        chart_data = {'data': mtf_data.get(signal.timeframe, None)}
+                        await self.telegram_bot.send_signal(signal, chart_data)
                     else:
-                        logger.info(f"{symbol}: Signal sent to Telegram but NOT executed on MT5 (execution limits reached)")
-                        # Record the signal even if not executed
-                        self.performance.record_signal(symbol, signal.signal_type)
+                        logger.warning(f"Execution for {symbol} failed. Signal will not be sent to Telegram.")
+
                 else:
-                    # If not auto-trading, record the signal
+                    # Si el auto-trading está desactivado o los filtros no pasan, solo se registra internamente.
+                    log_reason = "Auto-trading disabled" if not self.auto_trading_enabled else "Execution limits reached"
+                    logger.info(f"Signal for {symbol} generated but not executed: {log_reason}")
+                    # Se registra la señal para estadísticas, aunque no se ejecute.
                     self.performance.record_signal(symbol, signal.signal_type)
             else:
                 logger.info(f"Analysis for {symbol} complete. No signal generated (HOLD).")
@@ -358,12 +350,15 @@ class MT5TradingBot:
             logger.error(f"Error analyzing {symbol}: {e}")
             self.performance.record_error("analysis", str(e), symbol)
 
-    async def _execute_signal(self, signal):
+    async def _execute_signal(self, signal) -> bool:
         """
         Execute signal automatically on MT5
 
         Args:
             signal: TradingSignal object
+        
+        Returns:
+            True if execution was successful, False otherwise.
         """
         try:
             logger.info(f"Executing signal: {signal.signal_type} {signal.symbol}")
@@ -374,11 +369,11 @@ class MT5TradingBot:
 
             if len(open_positions) > 0:
                 logger.warning(f"{signal.symbol}: Already has open position, NOT executing on MT5")
-                return
+                return False
 
             if total_positions >= self.max_open_positions:
                 logger.warning(f"Max positions ({self.max_open_positions}) reached, NOT executing {signal.symbol} on MT5")
-                return
+                return False
 
             # Get account info
             account_info = self.mt5_connector.get_account_info()
@@ -394,20 +389,17 @@ class MT5TradingBot:
                 logger.error(f"Could not get symbol info for {signal.symbol}")
                 return
 
-            # Usar el tamaño de lote fijo de la configuración
-            lot_size = self.lot_size
-            logger.info(f"Using fixed lot size: {lot_size}")
+            # Usar el tamaño de lote dinámico de la señal
+            lot_size = signal.lot_size
+            logger.info(f"Using dynamic lot size: {lot_size}")
 
             # Execute order
-            # MT5 comment limit: 31 characters
-            symbol_clean = signal.symbol.replace(" ", "")
-            comment = f"Bot-{symbol_clean}-{signal.signal_type}"[:31]
+            # Se ha acortado el comentario para asegurar que el ATR siempre se guarde correctamente.
+            # Formato: AI|{atr_value}
+            comment = f"AI|{signal.atr_at_signal:.5f}"
 
-            # Seleccionar el nivel de TP inicial según la configuración
-            tp_level_index = config.initial_take_profit_level - 1
-            initial_tp = None
-            if signal.take_profit_levels and len(signal.take_profit_levels) > tp_level_index:
-                initial_tp = signal.take_profit_levels[tp_level_index]
+            # Para la ejecución interna, siempre usaremos el TP1 como objetivo inicial.
+            initial_tp = signal.take_profit_levels[0] if signal.take_profit_levels else None
 
             result = self.order_executor.execute_market_order(
                 symbol=signal.symbol,
@@ -434,16 +426,19 @@ class MT5TradingBot:
 
                 # Store execution info for internal tracking
                 self.performance.record_signal(signal.symbol, signal.signal_type)
+                return True
 
             else:
                 # Only log error internally (NOT sent to Telegram)
                 logger.error(f"Failed to execute order for {signal.symbol}")
                 self.performance.record_error("order_execution", f"Failed to execute {signal.signal_type}", signal.symbol)
+                return False
 
         except Exception as e:
             # Only log error internally (NOT sent to Telegram)
             logger.error(f"Error executing signal: {e}")
             self.performance.record_error("signal_execution", str(e), signal.symbol)
+            return False
 
     async def _manage_open_positions(self):
         """Gestiona las posiciones abiertas para aplicar Break Even y Trailing Stop."""
@@ -476,17 +471,33 @@ class MT5TradingBot:
                 else: # SELL
                     profit_points = (open_price - current_price) / point_size
 
-                # --- Lógica de Break Even ---
-                if config.enable_break_even and ticket not in self.break_even_activated:
-                    if profit_points >= config.break_even_trigger_points:
-                        profit_lock_distance = config.break_even_profit_lock_points * point_size
-                        new_sl = 0
-                        if order_type == 'BUY':
-                            new_sl = open_price + profit_lock_distance
-                        else: # SELL
-                            new_sl = open_price - profit_lock_distance
+                # Extraer ATR del comentario de la orden
+                comment = position.get('comment', '')
+                atr_at_signal = 0.0
+                if 'AI|' in comment:
+                    try:
+                        atr_at_signal = float(comment.split('|')[1])
+                    except (ValueError, IndexError):
+                        logger.warning(f"No se pudo extraer el ATR del comentario: '{comment}'")
 
-                        if current_sl != new_sl:
+                if atr_at_signal <= 0:
+                    logger.warning(f"ATR inválido ({atr_at_signal}) para la operación #{ticket}. No se puede gestionar dinámicamente.")
+                    continue
+
+                # --- Lógica de Break Even Dinámico ---
+                if config.enable_break_even and ticket not in self.break_even_activated:
+                    trigger_distance = atr_at_signal * config.break_even_trigger_atr_multiplier
+                    profit_lock_distance = atr_at_signal * config.break_even_profit_lock_atr_multiplier
+                    
+                    profit_in_currency = position.get('profit', 0.0)
+
+                    if (order_type == 'BUY' and current_price >= open_price + trigger_distance) or \
+                       (order_type == 'SELL' and current_price <= open_price - trigger_distance):
+                        
+                        new_sl = open_price + profit_lock_distance if order_type == 'BUY' else open_price - profit_lock_distance
+
+                        if (order_type == 'BUY' and new_sl > current_sl) or \
+                           (order_type == 'SELL' and new_sl < current_sl):
                             logger.info(f"Activando Break Even para la operación #{ticket} en {symbol}. Nuevo SL: {new_sl:.5f}")
                             modified = self.order_executor.modify_order(ticket, stop_loss=new_sl)
                             if modified:
@@ -494,29 +505,23 @@ class MT5TradingBot:
                                 await self.telegram_bot.send_break_even_notification(position, new_sl)
                         else:
                             self.break_even_activated[ticket] = True
-                
-                # --- Lógica de Trailing Stop ---
+
+                # --- Lógica de Trailing Stop Dinámico ---
                 if config.enable_trailing_stop:
-                    if profit_points >= config.trailing_stop_trigger_points:
-                        new_sl = 0
-                        distance = config.trailing_stop_distance_points * point_size
+                    trigger_distance = atr_at_signal * config.trailing_stop_trigger_atr_multiplier
+                    trailing_distance = atr_at_signal * config.trailing_stop_distance_atr_multiplier
+
+                    if (order_type == 'BUY' and current_price >= open_price + trigger_distance) or \
+                       (order_type == 'SELL' and current_price <= open_price - trigger_distance):
                         
-                        if order_type == 'BUY':
-                            new_sl = current_price - distance
-                            # Solo mover el SL si es más alto que el SL actual
-                            if new_sl > current_sl:
-                                logger.info(f"Actualizando Trailing Stop para la operación #{ticket} en {symbol} a {new_sl:.5f}.")
-                                modified = self.order_executor.modify_order(ticket, stop_loss=new_sl)
-                                if modified:
-                                    await self.telegram_bot.send_trailing_stop_notification(position, new_sl)
-                        else: # SELL
-                            new_sl = current_price + distance
-                            # Solo mover el SL si es más bajo que el SL actual
-                            if new_sl < current_sl:
-                                logger.info(f"Actualizando Trailing Stop para la operación #{ticket} en {symbol} a {new_sl:.5f}.")
-                                modified = self.order_executor.modify_order(ticket, stop_loss=new_sl)
-                                if modified:
-                                    await self.telegram_bot.send_trailing_stop_notification(position, new_sl)
+                        new_sl = current_price - trailing_distance if order_type == 'BUY' else current_price + trailing_distance
+
+                        if (order_type == 'BUY' and new_sl > current_sl) or \
+                           (order_type == 'SELL' and new_sl < current_sl):
+                            logger.info(f"Actualizando Trailing Stop para la operación #{ticket} en {symbol} a {new_sl:.5f}.")
+                            modified = self.order_executor.modify_order(ticket, stop_loss=new_sl)
+                            if modified:
+                                await self.telegram_bot.send_trailing_stop_notification(position, new_sl)
 
         except Exception as e:
             logger.error(f"Error al gestionar las posiciones abiertas: {e}")

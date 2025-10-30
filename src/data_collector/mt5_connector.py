@@ -108,10 +108,29 @@ class MT5Connector:
 
             mt5_timeframe = tf_map.get(timeframe, mt5.TIMEFRAME_H1)
 
-            # Fetch rates
+            # Se ha modificado la obtención de datos para que sea más robusta.
+            # En lugar de solicitar los últimos N registros, se solicita un rango de fechas.
+            # Esto puede forzar a la terminal MT5 a descargar el historial si no está disponible localmente.
+            date_to = datetime.now()
+            
+            # Se calcula un rango de fechas generoso para asegurar que se obtengan suficientes datos.
+            days_to_request = 30  # Valor por defecto
+            tf_lower = timeframe.lower()
+            if 'd' in tf_lower:
+                days_to_request = limit * 2  # Para timeframe diario, solicitar el doble de días como búfer.
+            elif 'h' in tf_lower:
+                hours = int(tf_lower.replace('h', ''))
+                days_to_request = (limit * hours) // 24 * 3 + 15  # Búfer para fines de semana.
+            elif 'm' in tf_lower:
+                minutes = int(tf_lower.replace('m', ''))
+                # Se asegura un mínimo de días para timeframes pequeños
+                days_to_request = max((limit * minutes) // (24*60) * 3 + 10, 10)
+
+            date_from = date_to - timedelta(days=days_to_request)
+
             rates = await asyncio.get_event_loop().run_in_executor(
                 None,
-                lambda: mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, limit)
+                lambda: mt5.copy_rates_range(symbol, mt5_timeframe, date_from, date_to)
             )
 
             if rates is None or len(rates) == 0:
@@ -131,8 +150,13 @@ class MT5Connector:
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
             df.set_index('timestamp', inplace=True)
 
-            # Select relevant columns
+            # Se seleccionan las columnas relevantes.
             df = df[['open', 'high', 'low', 'close', 'volume']]
+
+            # Después de obtener un rango, nos aseguramos de usar solo los últimos `limit` registros
+            # para mantener la consistencia con la lógica anterior.
+            if len(df) > limit:
+                df = df.tail(limit)
 
             # Add metadata
             df['symbol'] = symbol
